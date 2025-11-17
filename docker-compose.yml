@@ -1,0 +1,18 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    container_name: voyis-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: voyis
+      POSTGRES_PASSWORD: voyis_password
+      POSTGRES_DB: voyis_images
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+volumes:
+  db_data:
