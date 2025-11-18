@@ -13,18 +13,10 @@ function createWindow() {
     icon: path.join(process.env.VITE_PUBLIC, "electron-vite.svg"),
     webPreferences: {
       preload: path.join(__dirname$1, "preload.mjs"),
-      // 🟢 The important part — allow frontend to call localhost API
-      webSecurity: false,
-      // allow http requests
-      allowRunningInsecureContent: true,
-      // avoid mixed-content blocking
-      contextIsolation: false,
-      // allows fetch from renderer
-      nodeIntegration: true
-      // optional but useful
+      contextIsolation: true,
+      nodeIntegration: false
     }
   });
-  win.webContents.openDevTools();
   win.webContents.on("did-finish-load", () => {
     win == null ? void 0 : win.webContents.send("main-process-message", (/* @__PURE__ */ new Date()).toLocaleString());
   });

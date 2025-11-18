@@ -1,4 +1,5 @@
 const express = require('express');
+const cors = require('cors');
 const multer = require('multer');
 const { PrismaClient } = require('@prisma/client');
 const path = require('path');
@@ -28,6 +29,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
+app.use(cors());
 app.use(express.json());
 
 // Check health
@@ -75,5 +77,6 @@ app.get("/images", async (req, res) => {
 });
 
 app.use("/thumbnails", express.static(path.join(__dirname, "uploads", "thumbnails")));
+app.use("/uploads/images", express.static(path.join(__dirname, "uploads", "images")));
 
 app.listen(PORT, () => console.log(`API server running on http://localhost:${PORT}`));

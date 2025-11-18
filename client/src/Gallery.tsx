@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-
+import Viewer from "./Viewer";  
 interface ImageItem {
   id: number;
   filename: string;
@@ -10,6 +10,7 @@ interface ImageItem {
 
 export default function Gallery() {
   const [images, setImages] = useState<ImageItem[]>([]);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("http://localhost:4000/images")
@@ -33,7 +34,16 @@ export default function Gallery() {
         }}
       >
         {images.map(img => (
-          <div key={img.id} style={{ border: "1px solid #ccc", borderRadius: 8, padding: 8 }}>
+          <div
+            key={img.id}
+            style={{
+              border: "1px solid #ccc",
+              borderRadius: 8,
+              padding: 8,
+              cursor: "pointer"
+            }}
+            onClick={() => setSelectedImage(`http://localhost:4000/uploads/images/${img.filename}`)}
+          >
             <img
               src={`http://localhost:4000${img.thumbnail}`}
               style={{ width: "100%", borderRadius: 4 }}
@@ -42,6 +52,14 @@ export default function Gallery() {
           </div>
         ))}
       </div>
+
+      {/* Viewer Modal */}
+      {selectedImage && (
+        <Viewer
+          imageUrl={selectedImage}
+          onClose={() => setSelectedImage(null)}
+        />
+      )}
     </div>
   );
 }
