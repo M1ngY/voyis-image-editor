@@ -1,7 +1,16 @@
 import { useEffect, useState, useRef } from "react";
-import Viewer from "./Viewer";  
+import Viewer from "./Viewer";
+import { 
+  syncWithServer, 
+  updateLocalImage, 
+  removeLocalImage, 
+  markImagePending,
+  getSyncStatus,
+  loadLocalImages,
+  type SyncResult 
+} from "./syncUtils";
 
-interface ImageItem {
+export interface ImageItem {
   id: number;
   filename: string;
   createdAt: string;
@@ -22,6 +31,8 @@ export default function Gallery() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress[]>([]);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(getSyncStatus());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchImages = () => {
@@ -29,14 +40,54 @@ export default function Gallery() {
       .then(res => res.json())
       .then(data => {
         console.log("Fetched images:", data);
+        // Update local storage with server data
+        data.forEach((img: ImageItem) => updateLocalImage(img));
         setImages(data);
+        setSyncStatus(getSyncStatus());
       })
       .catch(err => console.error("Fetch error:", err));
   };
 
   useEffect(() => {
+    // Load from local storage first for faster initial render
+    const localImages = loadLocalImages();
+    if (localImages.length > 0) {
+      setImages(localImages);
+    }
+    
+    // Then fetch from server
     fetchImages();
   }, []);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      const result: SyncResult = await syncWithServer();
+      
+      if (result.success) {
+        // Refresh images after sync
+        fetchImages();
+        
+        // Show sync summary
+        const message = [
+          `Sync completed!`,
+          `Uploaded: ${result.uploaded}`,
+          `Downloaded: ${result.downloaded}`,
+          result.conflicts > 0 ? `Conflicts: ${result.conflicts}` : null,
+        ].filter(Boolean).join('\n');
+        
+        alert(message);
+      } else {
+        alert(`Sync failed: ${result.error || 'Unknown error'}`);
+      }
+    } catch (error: any) {
+      console.error('Sync error:', error);
+      alert(`Sync failed: ${error.message || 'Unknown error'}`);
+    } finally {
+      setSyncing(false);
+      setSyncStatus(getSyncStatus());
+    }
+  };
 
   const handleFileSelect = () => {
     fileInputRef.current?.click();
@@ -81,6 +132,22 @@ export default function Gallery() {
         // Handle completion
         xhr.addEventListener('load', () => {
           if (xhr.status === 200) {
+            try {
+              const result = JSON.parse(xhr.responseText);
+              if (result.success && result.image) {
+                // Update local storage with uploaded image
+                updateLocalImage({
+                  id: result.image.id,
+                  filename: result.image.filename,
+                  createdAt: result.image.createdAt,
+                  size: result.image.size,
+                  thumbnail: `/thumbnails/${result.thumbnail}`,
+                });
+              }
+            } catch (e) {
+              console.error('Failed to parse upload response:', e);
+            }
+            
             setUploadProgress(prev => 
               prev.map((item, idx) => 
                 idx === i ? { ...item, progress: 100, status: 'success' } : item
@@ -132,6 +199,7 @@ export default function Gallery() {
       fetchImages();
       setUploading(false);
       setUploadProgress([]);
+      setSyncStatus(getSyncStatus());
       // Reset file input
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
@@ -146,21 +214,43 @@ export default function Gallery() {
 
     setDeletingId(id);
     try {
+      console.log('Deleting image with ID:', id);
       const response = await fetch(`http://localhost:4000/images/${id}`, {
         method: 'DELETE',
       });
 
+      console.log('Delete response status:', response.status);
+
       if (!response.ok) {
-        const error = await response.json();
-        alert(`Failed to delete: ${error.error || 'Unknown error'}`);
+        const errorText = await response.text();
+        console.error('Delete failed:', response.status, errorText);
+        let errorMessage = `Server error (${response.status})`;
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.error || errorMessage;
+          if (errorJson.details) {
+            errorMessage += ': ' + errorJson.details;
+          }
+        } catch {
+          errorMessage = errorText || errorMessage;
+        }
+        alert(`Failed to delete: ${errorMessage}`);
         return;
       }
 
+      const result = await response.json();
+      console.log('Delete result:', result);
+
+      // Remove from local storage
+      removeLocalImage(id);
+      
       // Refresh gallery after successful deletion
       fetchImages();
-    } catch (error) {
+      setSyncStatus(getSyncStatus());
+    } catch (error: any) {
       console.error('Delete error:', error);
-      alert('Failed to delete image');
+      const errorMessage = error.message || 'Network error or server unavailable';
+      alert(`Failed to delete image: ${errorMessage}`);
     } finally {
       setDeletingId(null);
     }
@@ -176,17 +266,43 @@ export default function Gallery() {
               Uploading... ({uploadProgress.filter(p => p.status === 'success').length}/{uploadProgress.length})
             </div>
           )}
+          {syncStatus.pending > 0 && (
+            <div style={{ fontSize: 12, color: '#ff9800', padding: '4px 8px', background: '#fff3cd', borderRadius: 4 }}>
+              {syncStatus.pending} pending
+            </div>
+          )}
+          {syncStatus.lastSync && (
+            <div style={{ fontSize: 11, color: '#666' }}>
+              Last sync: {new Date(syncStatus.lastSync).toLocaleTimeString()}
+            </div>
+          )}
           <button
-            onClick={handleFileSelect}
-            disabled={uploading}
+            onClick={handleSync}
+            disabled={syncing || uploading}
             style={{
               padding: '10px 20px',
               fontSize: 14,
               border: 'none',
               borderRadius: 6,
-              background: uploading ? '#ccc' : '#007bff',
+              background: syncing || uploading ? '#ccc' : '#28a745',
               color: 'white',
-              cursor: uploading ? 'not-allowed' : 'pointer',
+              cursor: syncing || uploading ? 'not-allowed' : 'pointer',
+              fontWeight: 500,
+            }}
+          >
+            {syncing ? '⏳ Syncing...' : '🔄 Sync'}
+          </button>
+          <button
+            onClick={handleFileSelect}
+            disabled={uploading || syncing}
+            style={{
+              padding: '10px 20px',
+              fontSize: 14,
+              border: 'none',
+              borderRadius: 6,
+              background: uploading || syncing ? '#ccc' : '#007bff',
+              color: 'white',
+              cursor: uploading || syncing ? 'not-allowed' : 'pointer',
               fontWeight: 500,
             }}
           >

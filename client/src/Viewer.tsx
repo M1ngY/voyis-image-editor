@@ -7,6 +7,8 @@ import {
   Transformer,
 } from "react-konva";
 import useImage from "use-image";
+import { updateLocalImage } from "./syncUtils";
+import type { ImageItem } from "./Gallery";
 
 interface ViewerProps {
   imageUrl: string;
@@ -235,6 +237,18 @@ export default function Viewer({ imageUrl, onClose, onUploadSuccess }: ViewerPro
       console.log('Upload result:', result);
 
       if (result.success) {
+        // Update local storage with new image
+        if (result.image) {
+          const imageItem: ImageItem = {
+            id: result.image.id,
+            filename: result.image.filename,
+            createdAt: result.image.createdAt,
+            size: result.image.size,
+            thumbnail: `/thumbnails/${result.thumbnail}`,
+          };
+          updateLocalImage(imageItem);
+        }
+        
         alert('Cropped image uploaded successfully!');
         if (onUploadSuccess) {
           onUploadSuccess();
