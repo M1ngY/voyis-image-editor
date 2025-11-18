@@ -1,13 +1,12 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, type CSSProperties } from "react";
 import Viewer from "./Viewer";
-import { 
-  syncWithServer, 
-  updateLocalImage, 
-  removeLocalImage, 
-  markImagePending,
+import {
+  syncWithServer,
+  updateLocalImage,
+  removeLocalImage,
   getSyncStatus,
   loadLocalImages,
-  type SyncResult 
+  type SyncResult,
 } from "./syncUtils";
 
 export interface ImageItem {
@@ -21,121 +20,324 @@ export interface ImageItem {
 interface UploadProgress {
   filename: string;
   progress: number;
-  status: 'uploading' | 'success' | 'error';
+  status: "uploading" | "success" | "error";
   error?: string;
 }
 
+type TabKey = "gallery" | "viewer";
+type LogLevel = "info" | "warning" | "error";
+
+interface LogEntry {
+  id: string;
+  timestamp: string;
+  message: string;
+  level: LogLevel;
+}
+
+const levelColors: Record<LogLevel, string> = {
+  info: "#0ea5e9",
+  warning: "#f59e0b",
+  error: "#ef4444",
+};
+
+const tabButtonStyle = (active: boolean): CSSProperties => ({
+  flex: 1,
+  padding: "14px 18px",
+  background: active ? "#0ea5e9" : "transparent",
+  color: active ? "#fff" : "#0f172a",
+  border: "none",
+  borderBottom: active ? "3px solid #0ea5e9" : "3px solid transparent",
+  fontWeight: 600,
+  fontSize: 15,
+  cursor: active ? "default" : "pointer",
+  transition: "all 0.2s ease",
+});
+
+const logEntryStyle = (level: LogLevel): CSSProperties => ({
+  borderLeft: `4px solid ${levelColors[level]}`,
+  padding: "8px 12px",
+  borderRadius: 8,
+  background: "#f8fafc",
+  display: "flex",
+  flexDirection: "column",
+  gap: 4,
+});
+
+const styles = {
+  page: {
+    minHeight: "100vh",
+    padding: 24,
+    background: "#e2e8f0",
+    display: "flex",
+    flexDirection: "column",
+    gap: 16,
+    boxSizing: "border-box" as const,
+  },
+  mainContent: {
+    display: "flex",
+    flexWrap: "wrap" as const,
+    gap: 16,
+    flex: 1,
+  },
+  leftPanel: {
+    flex: "0 0 320px",
+    minWidth: 280,
+    background: "#fff",
+    borderRadius: 16,
+    boxShadow: "0 20px 35px rgba(15,23,42,0.08)",
+    padding: 20,
+    display: "flex",
+    flexDirection: "column",
+    gap: 16,
+  },
+  section: {
+    background: "#f8fafc",
+    borderRadius: 12,
+    padding: 16,
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
+  helperText: {
+    margin: 0,
+    fontSize: 13,
+    color: "#64748b",
+    lineHeight: 1.4,
+  },
+  badge: {
+    alignSelf: "flex-start",
+    padding: "4px 8px",
+    background: "#fff",
+    borderRadius: 999,
+    fontSize: 11,
+    fontWeight: 600,
+    color: "#475569",
+    border: "1px solid #e2e8f0",
+  },
+  centerPanel: {
+    flex: "1 1 420px",
+    minWidth: 320,
+    background: "#fff",
+    borderRadius: 16,
+    boxShadow: "0 20px 35px rgba(15,23,42,0.08)",
+    display: "flex",
+    flexDirection: "column",
+  },
+  tabContent: {
+    padding: 20,
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    gap: 16,
+  },
+  galleryGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+    gap: 16,
+  },
+  card: {
+    border: "1px solid #e2e8f0",
+    borderRadius: 12,
+    padding: 12,
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    position: "relative",
+    cursor: "pointer",
+    background: "#fff",
+    transition: "box-shadow 0.2s ease, transform 0.2s ease",
+  },
+  viewerPanel: {
+    flex: 1,
+    minHeight: 320,
+    background: "#0f172a",
+    borderRadius: 16,
+    padding: 24,
+    color: "#fff",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 16,
+    textAlign: "center" as const,
+  },
+  bottomPanel: {
+    background: "#fff",
+    borderRadius: 16,
+    padding: 20,
+    boxShadow: "0 15px 30pxrgba(15,23,42,0.08)",
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
+  logList: {
+    maxHeight: 220,
+    overflowY: "auto" as const,
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+  },
+};
+
+const formatBytes = (size: number | undefined) => {
+  if (size === undefined) return "--";
+  if (size === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = size;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  const decimals = value < 10 && index > 0 ? 1 : 0;
+  return `${value.toFixed(decimals)} ${units[index]}`;
+};
+
+const formatDate = (iso: string | undefined) => {
+  if (!iso) return "--";
+  return new Date(iso).toLocaleString();
+};
+
 export default function Gallery() {
   const [images, setImages] = useState<ImageItem[]>([]);
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectedImageMeta, setSelectedImageMeta] = useState<ImageItem | null>(null);
+  const [activeTab, setActiveTab] = useState<TabKey>("gallery");
+  const [activityLog, setActivityLog] = useState<LogEntry[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress[]>([]);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState(getSyncStatus());
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const viewerContainerRef = useRef<HTMLDivElement>(null);
+  const [viewerSize, setViewerSize] = useState({ width: 800, height: 500 });
+
+  const addLog = (message: string, level: LogLevel = "info") => {
+    setActivityLog((prev) => {
+      const entry: LogEntry = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        timestamp: new Date().toLocaleTimeString(),
+        message,
+        level,
+      };
+      return [entry, ...prev].slice(0, 100);
+    });
+  };
 
   const fetchImages = () => {
     fetch("http://localhost:4000/images")
-      .then(res => res.json())
-      .then(data => {
-        console.log("Fetched images:", data);
-        // Update local storage with server data
+      .then((res) => res.json())
+      .then((data) => {
         data.forEach((img: ImageItem) => updateLocalImage(img));
         setImages(data);
         setSyncStatus(getSyncStatus());
+        addLog(`Fetched ${data.length} image(s) from server.`);
       })
-      .catch(err => console.error("Fetch error:", err));
+      .catch((err) => {
+        console.error("Fetch error:", err);
+        addLog(`Failed to fetch images: ${err.message || err}`, "error");
+      });
   };
 
   useEffect(() => {
-    // Load from local storage first for faster initial render
     const localImages = loadLocalImages();
     if (localImages.length > 0) {
       setImages(localImages);
+      addLog(`Loaded ${localImages.length} cached image(s).`);
     }
-    
-    // Then fetch from server
     fetchImages();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!viewerContainerRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          setViewerSize({ width, height });
+        }
+      }
+    });
+    observer.observe(viewerContainerRef.current);
+    return () => observer.disconnect();
   }, []);
 
   const handleSync = async () => {
+    if (syncing) return;
     setSyncing(true);
+    addLog("Sync started (Local Always Wins).");
     try {
       const result: SyncResult = await syncWithServer();
-      
+      fetchImages();
       if (result.success) {
-        // Refresh images after sync
-        fetchImages();
-        
-        // Show sync summary
-        const message = [
-          `Sync completed!`,
-          `Uploaded: ${result.uploaded}`,
-          `Downloaded: ${result.downloaded}`,
-          result.conflicts > 0 ? `Conflicts: ${result.conflicts}` : null,
-        ].filter(Boolean).join('\n');
-        
-        alert(message);
+        addLog(
+          `Sync complete • uploaded ${result.uploaded}, downloaded ${result.downloaded}, conflicts ${result.conflicts}.`,
+          result.conflicts > 0 ? "warning" : "info"
+        );
       } else {
-        alert(`Sync failed: ${result.error || 'Unknown error'}`);
+        addLog(`Sync failed: ${result.error || "Unknown error"}.`, "error");
+        alert(`Sync failed: ${result.error || "Unknown error"}`);
       }
     } catch (error: any) {
-      console.error('Sync error:', error);
-      alert(`Sync failed: ${error.message || 'Unknown error'}`);
+      console.error("Sync error:", error);
+      addLog(`Sync error: ${error.message || error}`, "error");
+      alert(`Sync failed: ${error.message || "Unknown error"}`);
     } finally {
       setSyncing(false);
       setSyncStatus(getSyncStatus());
     }
   };
 
-  const handleFileSelect = () => {
-    fileInputRef.current?.click();
+  const base64ToUint8Array = (base64: string) => {
+    const binaryString = window.atob(base64);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i += 1) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
   };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
+  const uploadFiles = async (fileArray: File[]) => {
+    if (!fileArray || fileArray.length === 0) {
+      return;
+    }
 
-    const fileArray = Array.from(files);
     setUploading(true);
-    
-    // Initialize progress for all files
-    const initialProgress: UploadProgress[] = fileArray.map(file => ({
+    addLog(`Uploading ${fileArray.length} file(s).`);
+
+    const initialProgress: UploadProgress[] = fileArray.map((file) => ({
       filename: file.name,
       progress: 0,
-      status: 'uploading'
+      status: "uploading",
     }));
     setUploadProgress(initialProgress);
 
-    // Upload files sequentially
-    for (let i = 0; i < fileArray.length; i++) {
+    for (let i = 0; i < fileArray.length; i += 1) {
       const file = fileArray[i];
       const formData = new FormData();
-      formData.append('image', file);
+      formData.append("image", file);
 
       try {
         const xhr = new XMLHttpRequest();
+        addLog(`Uploading ${file.name}...`);
 
-        // Track upload progress
-        xhr.upload.addEventListener('progress', (e) => {
-          if (e.lengthComputable) {
-            const progress = Math.round((e.loaded / e.total) * 100);
-            setUploadProgress(prev => 
-              prev.map((item, idx) => 
-                idx === i ? { ...item, progress } : item
-              )
+        xhr.upload.addEventListener("progress", (event) => {
+          if (event.lengthComputable) {
+            const progress = Math.round((event.loaded / event.total) * 100);
+            setUploadProgress((prev) =>
+              prev.map((item, idx) => (idx === i ? { ...item, progress } : item))
             );
           }
         });
 
-        // Handle completion
-        xhr.addEventListener('load', () => {
+        xhr.addEventListener("load", () => {
           if (xhr.status === 200) {
             try {
               const result = JSON.parse(xhr.responseText);
               if (result.success && result.image) {
-                // Update local storage with uploaded image
                 updateLocalImage({
                   id: result.image.id,
                   filename: result.image.filename,
@@ -144,112 +346,184 @@ export default function Gallery() {
                   thumbnail: `/thumbnails/${result.thumbnail}`,
                 });
               }
-            } catch (e) {
-              console.error('Failed to parse upload response:', e);
+            } catch (error) {
+              console.error("Failed to parse upload response:", error);
             }
-            
-            setUploadProgress(prev => 
-              prev.map((item, idx) => 
-                idx === i ? { ...item, progress: 100, status: 'success' } : item
+            addLog(`Upload succeeded: ${file.name}`);
+            setUploadProgress((prev) =>
+              prev.map((item, idx) =>
+                idx === i ? { ...item, progress: 100, status: "success" } : item
               )
             );
           } else {
-            setUploadProgress(prev => 
-              prev.map((item, idx) => 
-                idx === i ? { ...item, status: 'error', error: `Upload failed: ${xhr.statusText}` } : item
+            addLog(`Upload failed: ${file.name}`, "error");
+            setUploadProgress((prev) =>
+              prev.map((item, idx) =>
+                idx === i
+                  ? {
+                      ...item,
+                      status: "error",
+                      error: `Upload failed: ${xhr.statusText}`,
+                    }
+                  : item
               )
             );
           }
         });
 
-        // Handle errors
-        xhr.addEventListener('error', () => {
-          setUploadProgress(prev => 
-            prev.map((item, idx) => 
-              idx === i ? { ...item, status: 'error', error: 'Network error' } : item
+        xhr.addEventListener("error", () => {
+          addLog(`Network error during upload: ${file.name}`, "error");
+          setUploadProgress((prev) =>
+            prev.map((item, idx) =>
+              idx === i
+                ? { ...item, status: "error", error: "Network error" }
+                : item
             )
           );
         });
 
-        xhr.open('POST', 'http://localhost:4000/upload');
+        xhr.open("POST", "http://localhost:4000/upload");
         xhr.send(formData);
 
-        // Wait for this upload to complete before starting next
         await new Promise<void>((resolve) => {
-          xhr.addEventListener('loadend', () => resolve());
-          xhr.addEventListener('error', () => resolve());
+          xhr.addEventListener("loadend", () => resolve());
+          xhr.addEventListener("error", () => resolve());
         });
 
-        // Small delay between uploads
         if (i < fileArray.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 100));
         }
       } catch (error) {
-        console.error('Upload error:', error);
-        setUploadProgress(prev => 
-          prev.map((item, idx) => 
-            idx === i ? { ...item, status: 'error', error: 'Upload failed' } : item
+        console.error("Upload error:", error);
+        addLog(`Upload failed: ${file.name}`, "error");
+        setUploadProgress((prev) =>
+          prev.map((item, idx) =>
+            idx === i ? { ...item, status: "error", error: "Upload failed" } : item
           )
         );
       }
     }
 
-    // Refresh gallery after all uploads
     setTimeout(() => {
       fetchImages();
       setUploading(false);
       setUploadProgress([]);
       setSyncStatus(getSyncStatus());
-      // Reset file input
+      addLog("Upload batch completed.");
       if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+        fileInputRef.current.value = "";
       }
     }, 500);
+  };
+
+  const handleFileSelect = async () => {
+    if (window.voyisAPI?.selectImages) {
+      try {
+        const selectedFiles = await window.voyisAPI.selectImages();
+        if (!selectedFiles || selectedFiles.length === 0) {
+          return;
+        }
+        addLog(`Selected ${selectedFiles.length} file(s) via native dialog.`);
+
+        const browserFiles = selectedFiles.map((file) => {
+          const bytes = base64ToUint8Array(file.data);
+          return new File([bytes], file.name, {
+            type: file.type || "application/octet-stream",
+            lastModified: file.lastModified || Date.now(),
+          });
+        });
+
+        await uploadFiles(browserFiles);
+        return;
+      } catch (error) {
+        console.error("Native file dialog failed, falling back to input picker.", error);
+        addLog("Native file picker failed. Falling back to standard uploader.", "warning");
+        alert("Native file picker failed. Falling back to standard uploader.");
+      }
+    }
+
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    addLog(`Selected ${files.length} file(s) via fallback picker.`);
+    await uploadFiles(Array.from(files));
+  };
+
+  const handleCardDoubleClick = (img: ImageItem) => {
+    setSelectedImageMeta(img);
+    setActiveTab("viewer");
+    addLog(`Opened ${img.filename} in viewer.`);
   };
 
   const handleDelete = async (id: number, filename: string) => {
     if (!confirm(`Are you sure you want to delete "${filename}"?`)) {
       return;
     }
+    addLog(`Deleting ${filename}...`);
+
+    const releaseImageResources = () => {
+      const imgs = document.querySelectorAll("img");
+      imgs.forEach((img) => {
+        try {
+          const src = img.src;
+          if (src && (src.includes(filename) || src.includes(`thumb-${filename}`))) {
+            img.src = "";
+            if (src.startsWith("blob:")) {
+              URL.revokeObjectURL(src);
+            }
+          }
+        } catch {
+          // ignore
+        }
+      });
+
+      if ("caches" in window) {
+        caches.keys().then((keys) => {
+          keys.forEach((key) => caches.delete(key));
+        });
+      }
+    };
+
+    releaseImageResources();
 
     setDeletingId(id);
     try {
-      console.log('Deleting image with ID:', id);
       const response = await fetch(`http://localhost:4000/images/${id}`, {
-        method: 'DELETE',
+        method: "DELETE",
       });
-
-      console.log('Delete response status:', response.status);
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('Delete failed:', response.status, errorText);
         let errorMessage = `Server error (${response.status})`;
         try {
           const errorJson = JSON.parse(errorText);
           errorMessage = errorJson.error || errorMessage;
           if (errorJson.details) {
-            errorMessage += ': ' + errorJson.details;
+            errorMessage += `: ${errorJson.details}`;
           }
         } catch {
           errorMessage = errorText || errorMessage;
         }
         alert(`Failed to delete: ${errorMessage}`);
+        addLog(`Failed to delete ${filename}: ${errorMessage}`, "error");
         return;
       }
 
-      const result = await response.json();
-      console.log('Delete result:', result);
-
-      // Remove from local storage
+      await response.json();
       removeLocalImage(id);
-      
-      // Refresh gallery after successful deletion
+      if (selectedImageMeta?.id === id) {
+        setSelectedImageMeta(null);
+        setActiveTab("gallery");
+      }
+      addLog(`Deleted ${filename}.`);
       fetchImages();
       setSyncStatus(getSyncStatus());
     } catch (error: any) {
-      console.error('Delete error:', error);
-      const errorMessage = error.message || 'Network error or server unavailable';
+      const errorMessage = error.message || "Network error or server unavailable";
+      addLog(`Failed to delete ${filename}: ${errorMessage}`, "error");
       alert(`Failed to delete image: ${errorMessage}`);
     } finally {
       setDeletingId(null);
@@ -257,174 +531,287 @@ export default function Gallery() {
   };
 
   return (
-    <div style={{ padding: 24 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h2 style={{ margin: 0 }}>Image Gallery</h2>
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-          {uploading && (
-            <div style={{ fontSize: 14, color: '#666' }}>
-              Uploading... ({uploadProgress.filter(p => p.status === 'success').length}/{uploadProgress.length})
+    <div style={styles.page}>
+      <div style={styles.mainContent}>
+        <aside style={styles.leftPanel}>
+          <div style={styles.section}>
+            <h3 style={{ margin: 0 }}>Control Panel</h3>
+            <p style={styles.helperText}>
+              Upload new imagery and keep local cache aligned with the server database.
+            </p>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" as const }}>
+              <button
+                onClick={handleFileSelect}
+                disabled={uploading || syncing}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: 10,
+                  border: "none",
+                  fontWeight: 600,
+                  cursor: uploading || syncing ? "not-allowed" : "pointer",
+                  background: uploading || syncing ? "#94a3b8" : "#2563eb",
+                  color: "#fff",
+                  flex: "1 1 120px",
+                }}
+              >
+                📤 Upload
+              </button>
+              <button
+                onClick={handleSync}
+                disabled={syncing || uploading}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: 10,
+                  border: "none",
+                  fontWeight: 600,
+                  cursor: syncing || uploading ? "not-allowed" : "pointer",
+                  background: syncing || uploading ? "#94a3b8" : "#22c55e",
+                  color: "#fff",
+                  flex: "1 1 120px",
+                }}
+              >
+                {syncing ? "⏳ Syncing..." : "🔄 Sync"}
+              </button>
             </div>
-          )}
-          {syncStatus.pending > 0 && (
-            <div style={{ fontSize: 12, color: '#ff9800', padding: '4px 8px', background: '#fff3cd', borderRadius: 4 }}>
-              {syncStatus.pending} pending
-            </div>
-          )}
-          {syncStatus.lastSync && (
-            <div style={{ fontSize: 11, color: '#666' }}>
-              Last sync: {new Date(syncStatus.lastSync).toLocaleTimeString()}
-            </div>
-          )}
+            {uploading && (
+              <span style={styles.helperText}>
+                Uploading {uploadProgress.filter((p) => p.status === "success").length}/
+                {uploadProgress.length}
+              </span>
+            )}
+            {syncStatus.pending > 0 && (
+              <span style={{ ...styles.badge, background: "#fffbeb", color: "#92400e" }}>
+                {syncStatus.pending} pending changes
+              </span>
+            )}
+            {syncStatus.lastSync && (
+              <span style={styles.helperText}>
+                Last sync: {new Date(syncStatus.lastSync).toLocaleTimeString()}
+              </span>
+            )}
+          </div>
+
+          <div style={styles.section}>
+            <h4 style={{ margin: 0 }}>Sync Strategy</h4>
+            <p style={styles.helperText}>
+              Strategy: <strong>Local Always Wins</strong>. Local edits overwrite remote data to
+              preserve operator workflow. Risk: remote-only changes may be overwritten silently.
+            </p>
+          </div>
+
+          <div style={styles.section}>
+            <h4 style={{ margin: 0 }}>Selected Image Metadata</h4>
+            {selectedImageMeta ? (
+              <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+                <li>
+                  <strong>Name:</strong> {selectedImageMeta.filename}
+                </li>
+                <li>
+                  <strong>Captured:</strong> {formatDate(selectedImageMeta.createdAt)}
+                </li>
+                <li>
+                  <strong>Size:</strong> {formatBytes(selectedImageMeta.size)}
+                </li>
+                <li>
+                  <strong>ID:</strong> {selectedImageMeta.id}
+                </li>
+              </ul>
+            ) : (
+              <p style={styles.helperText}>Double-click a thumbnail to inspect file metadata.</p>
+            )}
+          </div>
+        </aside>
+
+        <section style={styles.centerPanel}>
+          <div style={{ display: "flex" }}>
+            {(["gallery", "viewer"] as TabKey[]).map((tab) => (
+              <button
+                key={tab}
+                style={tabButtonStyle(activeTab === tab)}
+                onClick={() => setActiveTab(tab)}
+                disabled={activeTab === tab}
+              >
+                {tab === "gallery" ? "📚 Gallery" : "🖼️ Single Viewer"}
+              </button>
+            ))}
+          </div>
+          <div style={styles.tabContent}>
+            {activeTab === "gallery" ? (
+              <>
+                {uploadProgress.length > 0 && (
+                  <div style={{ background: "#f8fafc", borderRadius: 12, padding: 16 }}>
+                    {uploadProgress.map((progress, idx) => (
+                      <div key={idx} style={{ marginBottom: 10 }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            marginBottom: 4,
+                            fontSize: 13,
+                          }}
+                        >
+                          <span>{progress.filename}</span>
+                          <span
+                            style={{
+                              color:
+                                progress.status === "success"
+                                  ? "#16a34a"
+                                  : progress.status === "error"
+                                  ? "#dc2626"
+                                  : "#475569",
+                              fontWeight: 600,
+                            }}
+                          >
+                            {progress.status === "success"
+                              ? "✓"
+                              : progress.status === "error"
+                              ? "✗"
+                              : `${progress.progress}%`}
+                          </span>
+                        </div>
+                        <div
+                          style={{
+                            width: "100%",
+                            height: 6,
+                            background: "#e2e8f0",
+                            borderRadius: 999,
+                            overflow: "hidden",
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: `${progress.progress}%`,
+                              height: "100%",
+                              background:
+                                progress.status === "success"
+                                  ? "#22c55e"
+                                  : progress.status === "error"
+                                  ? "#ef4444"
+                                  : "#3b82f6",
+                              transition: "width 0.3s ease",
+                            }}
+                          />
+                        </div>
+                        {progress.error && (
+                          <div style={{ fontSize: 12, color: "#dc2626", marginTop: 4 }}>
+                            {progress.error}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div style={styles.galleryGrid}>
+                  {images.map((img) => (
+                    <div
+                      key={img.id}
+                      style={styles.card}
+                      onDoubleClick={() => handleCardDoubleClick(img)}
+                    >
+                      <img
+                        src={`http://localhost:4000${img.thumbnail}`}
+                        style={{ width: "100%", borderRadius: 8, pointerEvents: "none" }}
+                        alt={img.filename}
+                        draggable={false}
+                      />
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{img.filename}</div>
+                      <div style={{ fontSize: 12, color: "#64748b" }}>
+                        {formatBytes(img.size)} • {new Date(img.createdAt).toLocaleDateString()}
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDelete(img.id, img.filename);
+                        }}
+                        disabled={deletingId === img.id}
+                        style={{
+                          position: "absolute",
+                          top: 8,
+                          right: 8,
+                          padding: "4px 8px",
+                          fontSize: 12,
+                          border: "none",
+                          borderRadius: 6,
+                          background: deletingId === img.id ? "#94a3b8" : "rgba(220,53,69,0.9)",
+                          color: "#fff",
+                          cursor: deletingId === img.id ? "not-allowed" : "pointer",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {deletingId === img.id ? "..." : "✕"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div style={styles.viewerPanel} ref={viewerContainerRef}>
+                {selectedImageMeta ? (
+                  <Viewer
+                    mode="embedded"
+                    containerSize={viewerSize}
+                    imageUrl={`http://localhost:4000/uploads/images/${selectedImageMeta.filename}`}
+                    onClose={() => {
+                      setSelectedImageMeta(null);
+                      setActiveTab("gallery");
+                    }}
+                    onUploadSuccess={() => {
+                      fetchImages();
+                      setSelectedImageMeta(null);
+                      setActiveTab("gallery");
+                    }}
+                  />
+                ) : (
+                  <p style={{ fontSize: 14, color: "#cbd5f5" }}>
+                    Double-click an image from the gallery to launch the viewer here.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+
+      <section style={styles.bottomPanel}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h3 style={{ margin: 0 }}>Activity Log</h3>
           <button
-            onClick={handleSync}
-            disabled={syncing || uploading}
+            onClick={() => setActivityLog([])}
             style={{
-              padding: '10px 20px',
-              fontSize: 14,
-              border: 'none',
-              borderRadius: 6,
-              background: syncing || uploading ? '#ccc' : '#28a745',
-              color: 'white',
-              cursor: syncing || uploading ? 'not-allowed' : 'pointer',
-              fontWeight: 500,
+              border: "none",
+              background: "transparent",
+              color: "#2563eb",
+              fontWeight: 600,
+              cursor: "pointer",
             }}
           >
-            {syncing ? '⏳ Syncing...' : '🔄 Sync'}
-          </button>
-          <button
-            onClick={handleFileSelect}
-            disabled={uploading || syncing}
-            style={{
-              padding: '10px 20px',
-              fontSize: 14,
-              border: 'none',
-              borderRadius: 6,
-              background: uploading || syncing ? '#ccc' : '#007bff',
-              color: 'white',
-              cursor: uploading || syncing ? 'not-allowed' : 'pointer',
-              fontWeight: 500,
-            }}
-          >
-            📤 Upload Images
+            Clear
           </button>
         </div>
-      </div>
+        <div style={styles.logList}>
+          {activityLog.length === 0 ? (
+            <p style={{ margin: 0, color: "#94a3b8" }}>No activity yet.</p>
+          ) : (
+            activityLog.map((entry) => (
+              <div key={entry.id} style={logEntryStyle(entry.level)}>
+                <span style={{ fontSize: 12, color: "#64748b" }}>{entry.timestamp}</span>
+                <span style={{ fontSize: 14 }}>{entry.message}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
 
       <input
         ref={fileInputRef}
         type="file"
         accept="image/*"
         multiple
-        style={{ display: 'none' }}
+        style={{ display: "none" }}
         onChange={handleFileChange}
       />
 
-      {uploadProgress.length > 0 && (
-        <div style={{ marginBottom: 16, padding: 12, background: '#f5f5f5', borderRadius: 8 }}>
-          {uploadProgress.map((progress, idx) => (
-            <div key={idx} style={{ marginBottom: 8 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                <span style={{ fontSize: 12 }}>{progress.filename}</span>
-                <span style={{ fontSize: 12, color: progress.status === 'success' ? 'green' : progress.status === 'error' ? 'red' : '#666' }}>
-                  {progress.status === 'success' ? '✓' : progress.status === 'error' ? '✗' : `${progress.progress}%`}
-                </span>
-              </div>
-              <div style={{ width: '100%', height: 4, background: '#ddd', borderRadius: 2, overflow: 'hidden' }}>
-                <div
-                  style={{
-                    width: `${progress.progress}%`,
-                    height: '100%',
-                    background: progress.status === 'success' ? '#28a745' : progress.status === 'error' ? '#dc3545' : '#007bff',
-                    transition: 'width 0.3s ease',
-                  }}
-                />
-              </div>
-              {progress.error && (
-                <div style={{ fontSize: 11, color: 'red', marginTop: 4 }}>{progress.error}</div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, 200px)",
-          gap: "16px",
-        }}
-      >
-        {images.map(img => (
-          <div
-            key={img.id}
-            style={{
-              border: "1px solid #ccc",
-              borderRadius: 8,
-              padding: 8,
-              cursor: "pointer",
-              userSelect: "none",
-              position: "relative",
-            }}
-            onDoubleClick={() => {
-              setSelectedImage(`http://localhost:4000/uploads/images/${img.filename}`);
-            }}
-          >
-            <img
-              src={`http://localhost:4000${img.thumbnail}`}
-              style={{ width: "100%", borderRadius: 4, pointerEvents: "none" }}
-              alt={img.filename}
-              draggable={false}
-            />
-            <div style={{ fontSize: 12, marginTop: 4 }}>{img.filename}</div>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDelete(img.id, img.filename);
-              }}
-              disabled={deletingId === img.id}
-              style={{
-                position: "absolute",
-                top: 4,
-                right: 4,
-                padding: "4px 8px",
-                fontSize: 12,
-                border: "none",
-                borderRadius: 4,
-                background: deletingId === img.id ? "#ccc" : "rgba(220, 53, 69, 0.9)",
-                color: "white",
-                cursor: deletingId === img.id ? "not-allowed" : "pointer",
-                fontWeight: 500,
-                opacity: 0.9,
-              }}
-              onMouseEnter={(e) => {
-                if (deletingId !== img.id) {
-                  e.currentTarget.style.opacity = "1";
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (deletingId !== img.id) {
-                  e.currentTarget.style.opacity = "0.9";
-                }
-              }}
-            >
-              {deletingId === img.id ? "..." : "✕"}
-            </button>
-          </div>
-        ))}
-      </div>
-
-      {/* Viewer Modal */}
-      {selectedImage && (
-        <Viewer
-          imageUrl={selectedImage}
-          onClose={() => setSelectedImage(null)}
-          onUploadSuccess={() => {
-            fetchImages(); // Refresh gallery after upload
-            setSelectedImage(null);
-          }}
-        />
-      )}
     </div>
   );
 }
