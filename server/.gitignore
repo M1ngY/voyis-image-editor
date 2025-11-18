@@ -1,8 +1,34 @@
+# Dependencies
 node_modules
+
+# Build outputs
 dist
 dist-electron
-uploads/images
-uploads/thumbnails
+
+# Uploaded files (user content)
+uploads/images/**
+uploads/thumbnails/**
+!uploads/images/.gitkeep
+!uploads/thumbnails/.gitkeep
+
+# Environment variables
 .env
+.env.local
+.env.*.local
+
+# Logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Database
 postgres-data
+*.db
+*.sqlite
+*.sqlite3
+
+# Prisma
+# Keep migrations, but ignore generated client in some setups
+# .prisma/client (if using custom output)

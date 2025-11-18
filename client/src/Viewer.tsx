@@ -11,9 +11,10 @@ import useImage from "use-image";
 interface ViewerProps {
   imageUrl: string;
   onClose: () => void;
+  onUploadSuccess?: () => void;
 }
 
-export default function Viewer({ imageUrl, onClose }: ViewerProps) {
+export default function Viewer({ imageUrl, onClose, onUploadSuccess }: ViewerProps) {
   const [image] = useImage(imageUrl, "anonymous");
   const [scale, setScale] = useState(1);
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
@@ -128,9 +129,11 @@ export default function Viewer({ imageUrl, onClose }: ViewerProps) {
     }
   };
 
-  /** Export crop area with correct coordinate calculation */
-  const exportCrop = () => {
-    if (!image || !imageRef.current || !cropRef.current) return;
+  const [isUploading, setIsUploading] = useState(false);
+
+  /** Get cropped image as data URL */
+  const getCroppedImageData = () => {
+    if (!image || !imageRef.current || !cropRef.current) return null;
 
     const img = imageRef.current;
     const imgX = img.x();
@@ -167,13 +170,85 @@ export default function Viewer({ imageUrl, onClose }: ViewerProps) {
       sourceHeight
     );
 
-    const dataURL = cropCanvas.toDataURL("image/png");
+    return cropCanvas.toDataURL("image/png");
+  };
+
+  /** Export crop area to local file */
+  const exportCrop = () => {
+    const dataURL = getCroppedImageData();
+    if (!dataURL) return;
 
     // Save as file
     const link = document.createElement("a");
     link.download = `cropped-${Date.now()}.png`;
     link.href = dataURL;
     link.click();
+  };
+
+  /** Upload cropped image to server */
+  const uploadCrop = async () => {
+    const dataURL = getCroppedImageData();
+    if (!dataURL) {
+      alert('No image data to upload');
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      // Extract original filename from imageUrl
+      const urlParts = imageUrl.split('/');
+      const originalFilename = urlParts[urlParts.length - 1] || 'image.png';
+
+      console.log('Uploading crop, filename:', originalFilename, 'data size:', dataURL.length);
+
+      const response = await fetch('http://localhost:4000/upload/crop', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          imageData: dataURL,
+          originalFilename,
+        }),
+      });
+
+      console.log('Upload response status:', response.status);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Upload failed:', response.status, errorText);
+        let errorMessage = `Server error (${response.status})`;
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.error || errorMessage;
+          if (errorJson.details) {
+            errorMessage += ': ' + errorJson.details;
+          }
+        } catch {
+          errorMessage = errorText || errorMessage;
+        }
+        alert('Failed to upload: ' + errorMessage);
+        return;
+      }
+
+      const result = await response.json();
+      console.log('Upload result:', result);
+
+      if (result.success) {
+        alert('Cropped image uploaded successfully!');
+        if (onUploadSuccess) {
+          onUploadSuccess();
+        }
+      } else {
+        alert('Failed to upload: ' + (result.error || 'Unknown error'));
+      }
+    } catch (error: any) {
+      console.error('Upload error:', error);
+      const errorMessage = error.message || 'Network error or server unavailable';
+      alert('Failed to upload cropped image: ' + errorMessage);
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const cropInfo = image ? {
@@ -185,6 +260,16 @@ export default function Viewer({ imageUrl, onClose }: ViewerProps) {
     <div style={styles.overlay}>
       {/* UI Toolbar */}
       <div style={styles.toolbar}>
+        <button 
+          onClick={uploadCrop} 
+          style={{
+            ...styles.btn,
+            ...((!image || crop.width === 0 || isUploading) ? { opacity: 0.5, cursor: "not-allowed" } : {})
+          }} 
+          disabled={!image || crop.width === 0 || isUploading}
+        >
+          {isUploading ? '⏳ Uploading...' : '☁️ Upload to Server'}
+        </button>
         <button 
           onClick={exportCrop} 
           style={{

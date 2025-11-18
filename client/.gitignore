@@ -7,10 +7,24 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies
 node_modules
+
+# Build outputs
 dist
 dist-ssr
+dist-electron
 *.local
+
+# Electron build artifacts
+out
+build
+*.app
+*.dmg
+*.exe
+*.deb
+*.rpm
+*.AppImage
 
 # Editor directories and files
 .vscode/*

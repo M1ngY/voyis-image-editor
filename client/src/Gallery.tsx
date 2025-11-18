@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import Viewer from "./Viewer";  
+
 interface ImageItem {
   id: number;
   filename: string;
@@ -12,7 +13,7 @@ export default function Gallery() {
   const [images, setImages] = useState<ImageItem[]>([]);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
-  useEffect(() => {
+  const fetchImages = () => {
     fetch("http://localhost:4000/images")
       .then(res => res.json())
       .then(data => {
@@ -20,6 +21,10 @@ export default function Gallery() {
         setImages(data);
       })
       .catch(err => console.error("Fetch error:", err));
+  };
+
+  useEffect(() => {
+    fetchImages();
   }, []);
 
   return (
@@ -40,13 +45,18 @@ export default function Gallery() {
               border: "1px solid #ccc",
               borderRadius: 8,
               padding: 8,
-              cursor: "pointer"
+              cursor: "pointer",
+              userSelect: "none",
             }}
-            onClick={() => setSelectedImage(`http://localhost:4000/uploads/images/${img.filename}`)}
+            onDoubleClick={() => {
+              setSelectedImage(`http://localhost:4000/uploads/images/${img.filename}`);
+            }}
           >
             <img
               src={`http://localhost:4000${img.thumbnail}`}
-              style={{ width: "100%", borderRadius: 4 }}
+              style={{ width: "100%", borderRadius: 4, pointerEvents: "none" }}
+              alt={img.filename}
+              draggable={false}
             />
             <div style={{ fontSize: 12 }}>{img.filename}</div>
           </div>
@@ -58,6 +68,10 @@ export default function Gallery() {
         <Viewer
           imageUrl={selectedImage}
           onClose={() => setSelectedImage(null)}
+          onUploadSuccess={() => {
+            fetchImages(); // Refresh gallery after upload
+            setSelectedImage(null);
+          }}
         />
       )}
     </div>
