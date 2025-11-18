@@ -119,6 +119,57 @@ app.post('/upload/crop', async (req, res) => {
   }
 });
 
+// Delete image (must be before /images route to avoid conflicts)
+app.delete("/images/:id", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    
+    if (isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid image ID' });
+    }
+
+    // Find image in database
+    const image = await prisma.image.findUnique({
+      where: { id }
+    });
+
+    if (!image) {
+      return res.status(404).json({ error: 'Image not found' });
+    }
+
+    // Delete files
+    const imagePath = image.filepath;
+    const thumbFilename = `thumb-${image.filename}`;
+    const thumbPath = path.join(thumbnailPath, thumbFilename);
+
+    // Delete original image
+    if (fs.existsSync(imagePath)) {
+      fs.unlinkSync(imagePath);
+    }
+
+    // Delete thumbnail
+    if (fs.existsSync(thumbPath)) {
+      fs.unlinkSync(thumbPath);
+    }
+
+    // Delete from database
+    await prisma.image.delete({
+      where: { id }
+    });
+
+    res.json({ 
+      success: true, 
+      message: 'Image deleted successfully' 
+    });
+  } catch (err) {
+    console.error('Delete error:', err);
+    res.status(500).json({ 
+      error: 'Failed to delete image',
+      details: err.message 
+    });
+  }
+});
+
 app.get("/images", async (req, res) => {
   const images = await prisma.image.findMany({
     orderBy: { createdAt: "desc" }

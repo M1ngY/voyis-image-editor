@@ -21,6 +21,7 @@ export default function Gallery() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress[]>([]);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchImages = () => {
@@ -138,6 +139,33 @@ export default function Gallery() {
     }, 500);
   };
 
+  const handleDelete = async (id: number, filename: string) => {
+    if (!confirm(`Are you sure you want to delete "${filename}"?`)) {
+      return;
+    }
+
+    setDeletingId(id);
+    try {
+      const response = await fetch(`http://localhost:4000/images/${id}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        alert(`Failed to delete: ${error.error || 'Unknown error'}`);
+        return;
+      }
+
+      // Refresh gallery after successful deletion
+      fetchImages();
+    } catch (error) {
+      console.error('Delete error:', error);
+      alert('Failed to delete image');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   return (
     <div style={{ padding: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
@@ -220,6 +248,7 @@ export default function Gallery() {
               padding: 8,
               cursor: "pointer",
               userSelect: "none",
+              position: "relative",
             }}
             onDoubleClick={() => {
               setSelectedImage(`http://localhost:4000/uploads/images/${img.filename}`);
@@ -231,7 +260,40 @@ export default function Gallery() {
               alt={img.filename}
               draggable={false}
             />
-            <div style={{ fontSize: 12 }}>{img.filename}</div>
+            <div style={{ fontSize: 12, marginTop: 4 }}>{img.filename}</div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDelete(img.id, img.filename);
+              }}
+              disabled={deletingId === img.id}
+              style={{
+                position: "absolute",
+                top: 4,
+                right: 4,
+                padding: "4px 8px",
+                fontSize: 12,
+                border: "none",
+                borderRadius: 4,
+                background: deletingId === img.id ? "#ccc" : "rgba(220, 53, 69, 0.9)",
+                color: "white",
+                cursor: deletingId === img.id ? "not-allowed" : "pointer",
+                fontWeight: 500,
+                opacity: 0.9,
+              }}
+              onMouseEnter={(e) => {
+                if (deletingId !== img.id) {
+                  e.currentTarget.style.opacity = "1";
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (deletingId !== img.id) {
+                  e.currentTarget.style.opacity = "0.9";
+                }
+              }}
+            >
+              {deletingId === img.id ? "..." : "✕"}
+            </button>
           </div>
         ))}
       </div>
