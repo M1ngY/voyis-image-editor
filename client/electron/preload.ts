@@ -22,3 +22,7 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
   // You can expose other APTs you need here.
   // ...
 })
+
+contextBridge.exposeInMainWorld('voyisAPI', {
+  selectImages: () => ipcRenderer.invoke('voyis:select-images'),
+})

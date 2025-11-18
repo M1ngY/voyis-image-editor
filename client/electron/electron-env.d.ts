@@ -22,6 +22,18 @@ declare namespace NodeJS {
 }
 
 // Used in Renderer process, expose in `preload.ts`
+interface VoyisSelectedFile {
+  path: string
+  name: string
+  type: string
+  size: number
+  lastModified: number
+  data: string
+}
+
 interface Window {
   ipcRenderer: import('electron').IpcRenderer
+  voyisAPI?: {
+    selectImages: () => Promise<VoyisSelectedFile[]>
+  }
 }

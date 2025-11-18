@@ -137,19 +137,49 @@ app.delete("/images/:id", async (req, res) => {
       return res.status(404).json({ error: 'Image not found' });
     }
 
-    // Delete files
+    // Delete files with retry mechanism for Windows EBUSY errors
     const imagePath = image.filepath;
     const thumbFilename = `thumb-${image.filename}`;
     const thumbPath = path.join(thumbnailPath, thumbFilename);
 
-    // Delete original image
-    if (fs.existsSync(imagePath)) {
-      fs.unlinkSync(imagePath);
+    // Helper function to delete file with retry
+    const deleteFileWithRetry = (filePath, maxRetries = 3, delay = 300) => {
+      return new Promise((resolve, reject) => {
+        const attemptDelete = (retries) => {
+          if (!fs.existsSync(filePath)) {
+            resolve();
+            return;
+          }
+
+          fs.unlink(filePath, (err) => {
+            if (!err) {
+              resolve();
+            } else if (err.code === 'EBUSY' && retries > 0) {
+              // Windows file lock - retry after delay
+              setTimeout(() => attemptDelete(retries - 1), delay);
+            } else {
+              reject(err);
+            }
+          });
+        };
+        attemptDelete(maxRetries);
+      });
+    };
+
+    // Delete original image with retry
+    try {
+      await deleteFileWithRetry(imagePath);
+    } catch (err) {
+      console.warn(`Failed to delete image file ${imagePath}:`, err.message);
+      // Continue even if file deletion fails
     }
 
-    // Delete thumbnail
-    if (fs.existsSync(thumbPath)) {
-      fs.unlinkSync(thumbPath);
+    // Delete thumbnail with retry
+    try {
+      await deleteFileWithRetry(thumbPath);
+    } catch (err) {
+      console.warn(`Failed to delete thumbnail ${thumbPath}:`, err.message);
+      // Continue even if thumbnail deletion fails
     }
 
     // Delete from database

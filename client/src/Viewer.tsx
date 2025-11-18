@@ -58,6 +58,40 @@ export default function Viewer({ imageUrl, onClose, onUploadSuccess }: ViewerPro
     }
   }, [image]);
 
+  // Release image resources on unmount or imageUrl change to prevent EBUSY errors on Windows
+  useEffect(() => {
+    return () => {
+      // Release Konva image reference
+      if (imageRef.current) {
+        try {
+          const konvaImage = imageRef.current;
+          if (konvaImage.image()) {
+            konvaImage.image(null);
+          }
+        } catch (e) {
+          // Ignore errors during cleanup
+        }
+      }
+      
+      // Release native image object (use-image returns HTMLImageElement)
+      if (image) {
+        try {
+          if (image instanceof HTMLImageElement) {
+            // Clear the src to release file handle
+            image.src = '';
+            // Also remove from cache if possible
+            if (image.complete) {
+              image.onload = null;
+              image.onerror = null;
+            }
+          }
+        } catch (e) {
+          // Ignore errors during cleanup
+        }
+      }
+    };
+  }, [image, imageUrl]);
+
   const handleWheel = (e: any) => {
     e.evt.preventDefault();
     const scaleBy = 1.1;
