@@ -11,10 +11,12 @@
   },
   "dependencies": {
     "@squoosh/lib": "^0.3.1",
+    "@types/react-window": "^1.8.8",
     "konva": "^10.0.9",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-konva": "^18.2.14",
+    "react-window": "^2.2.3",
     "use-image": "^1.1.4"
   },
   "devDependencies": {

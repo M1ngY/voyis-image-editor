@@ -59,9 +59,14 @@ graph TD;
 
 ## 5. Scalability Considerations
 
-### 5.1 UI
-- Use **virtualized rendering** (e.g., react-window) for large galleries
-- Lazy-load images and defer high-res loading until needed
+### 5.1 UI ✅ IMPLEMENTED
+- **Virtualized rendering**: Implemented using `react-window` for large galleries
+  - Automatically enabled when gallery has more than 50 images
+  - Uses `FixedSizeGrid` for efficient rendering of image thumbnails
+  - Only renders visible items, dramatically improving performance for 100+ images
+  - Maintains all existing functionality (selection, filtering, double-click, etc.)
+  - Falls back to standard grid rendering for smaller galleries (< 50 images)
+- **Lazy-load images**: Images use `loading="lazy"` attribute for deferred loading
 
 ### 5.2 API & Database
 - Use indexed queries for large metadata tables
