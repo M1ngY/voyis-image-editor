@@ -9,6 +9,19 @@ import {
   type SyncResult,
 } from "./syncUtils";
 
+export interface ExifMetadata {
+  make?: string | null;
+  model?: string | null;
+  lensModel?: string | null;
+  iso?: number | null;
+  exposureTime?: string | number | null;
+  fNumber?: number | null;
+  focalLength?: string | number | null;
+  dateTimeOriginal?: string | null;
+  gpsLatitude?: number | null;
+  gpsLongitude?: number | null;
+}
+
 export interface ImageItem {
   id: number;
   filename: string;
@@ -18,6 +31,7 @@ export interface ImageItem {
   mimetype: string;
   thumbnail: string;
   original: string;
+  exif?: ExifMetadata | null;
 }
 
 interface UploadProgress {
@@ -60,6 +74,39 @@ const fileTypeLabels: Record<FileTypeFilter, string> = {
   tiff: "TIF / TIFF",
   other: "Other",
 };
+
+type ExifDraft = Record<keyof ExifMetadata, string>;
+
+const emptyExifDraft: ExifDraft = {
+  make: "",
+  model: "",
+  lensModel: "",
+  iso: "",
+  exposureTime: "",
+  fNumber: "",
+  focalLength: "",
+  dateTimeOriginal: "",
+  gpsLatitude: "",
+  gpsLongitude: "",
+};
+
+const exifFieldsConfig: Array<{
+  key: keyof ExifMetadata;
+  label: string;
+  type: "text" | "number" | "datetime";
+  step?: string;
+}> = [
+  { key: "make", label: "Camera Make", type: "text" },
+  { key: "model", label: "Camera Model", type: "text" },
+  { key: "lensModel", label: "Lens Model", type: "text" },
+  { key: "iso", label: "ISO", type: "number", step: "1" },
+  { key: "fNumber", label: "Aperture (F-Number)", type: "number", step: "0.1" },
+  { key: "exposureTime", label: "Exposure Time", type: "text" },
+  { key: "focalLength", label: "Focal Length", type: "text" },
+  { key: "dateTimeOriginal", label: "Captured At", type: "datetime" },
+  { key: "gpsLatitude", label: "GPS Latitude", type: "number", step: "any" },
+  { key: "gpsLongitude", label: "GPS Longitude", type: "number", step: "any" },
+];
 
 const tabButtonStyle = (active: boolean): CSSProperties => ({
   flex: 1,
@@ -118,7 +165,7 @@ const styles: Record<string, CSSProperties> = {
   leftPanel: {
     flexGrow: 0,
     flexShrink: 0,
-    flexBasis: "320px", // ← 替换 flex: "0 0 320px"
+    flexBasis: "320px", 
     minWidth: 280,
     background: "#fff",
     borderRadius: 16,
@@ -159,7 +206,7 @@ const styles: Record<string, CSSProperties> = {
   centerPanel: {
     flexGrow: 1,
     flexShrink: 1,
-    flexBasis: "420px", // ← 替换 flex: "1 1 420px"
+    flexBasis: "420px", 
     minWidth: 320,
     background: "#fff",
     borderRadius: 16,
@@ -256,6 +303,43 @@ const styles: Record<string, CSSProperties> = {
     accentColor: "#2563eb",
     zIndex: 2,
   } as CSSProperties,
+
+  exifList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    margin: 0,
+    padding: 0,
+    listStyle: "none",
+  },
+
+  exifForm: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: 12,
+  },
+
+  exifLabel: {
+    display: "flex",
+    flexDirection: "column",
+    fontSize: 12,
+    color: "#475569",
+    gap: 4,
+  },
+
+  exifInput: {
+    padding: "8px 10px",
+    borderRadius: 8,
+    border: "1px solid #cbd5f5",
+    fontSize: 13,
+  },
+
+  exifActions: {
+    display: "flex",
+    gap: 10,
+    marginTop: 12,
+    flexWrap: "wrap",
+  },
 };
 
 
@@ -284,6 +368,80 @@ const formatBytesDetailed = (bytes: number) => {
   const index = Math.floor(Math.log(bytes) / Math.log(1024));
   const value = bytes / Math.pow(1024, index);
   return `${value.toFixed(value < 10 && index > 0 ? 1 : 0)} ${units[index]}`;
+};
+
+const toDateTimeLocalInput = (iso?: string | null) => {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return date.toISOString().slice(0, 16);
+};
+
+const createDraftFromExif = (exif?: ExifMetadata | null): ExifDraft => ({
+  make: exif?.make ?? "",
+  model: exif?.model ?? "",
+  lensModel: exif?.lensModel ?? "",
+  iso: exif?.iso !== undefined && exif?.iso !== null ? String(exif.iso) : "",
+  exposureTime: exif?.exposureTime ? String(exif.exposureTime) : "",
+  fNumber: exif?.fNumber !== undefined && exif?.fNumber !== null ? String(exif.fNumber) : "",
+  focalLength: exif?.focalLength ? String(exif.focalLength) : "",
+  dateTimeOriginal: toDateTimeLocalInput(exif?.dateTimeOriginal),
+  gpsLatitude:
+    exif?.gpsLatitude !== undefined && exif?.gpsLatitude !== null ? String(exif.gpsLatitude) : "",
+  gpsLongitude:
+    exif?.gpsLongitude !== undefined && exif?.gpsLongitude !== null ? String(exif.gpsLongitude) : "",
+});
+
+const parseDraftNumber = (value: string) => {
+  if (!value || !value.trim()) return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+};
+
+const parseDraftDate = (value: string) => {
+  if (!value || !value.trim()) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date.toISOString();
+};
+
+const draftToPayload = (draft: ExifDraft): ExifMetadata => ({
+  make: draft.make.trim() || null,
+  model: draft.model.trim() || null,
+  lensModel: draft.lensModel.trim() || null,
+  iso: parseDraftNumber(draft.iso),
+  exposureTime: draft.exposureTime.trim() || null,
+  fNumber: parseDraftNumber(draft.fNumber),
+  focalLength: draft.focalLength.trim() || null,
+  dateTimeOriginal: parseDraftDate(draft.dateTimeOriginal),
+  gpsLatitude: parseDraftNumber(draft.gpsLatitude),
+  gpsLongitude: parseDraftNumber(draft.gpsLongitude),
+});
+
+const formatExifValue = (value: unknown) => {
+  if (value === null || value === undefined || value === "") {
+    return "—";
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value.toString() : "—";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  return String(value);
+};
+
+const formatExifDate = (iso?: string | null) => {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
+  return date.toLocaleString();
 };
 
 const resolveMimeCategory = (mime?: string): FileTypeFilter => {
@@ -318,6 +476,9 @@ export default function Gallery() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [batchDeleting, setBatchDeleting] = useState(false);
   const [batchDownloading, setBatchDownloading] = useState(false);
+  const [isEditingExif, setIsEditingExif] = useState(false);
+  const [savingExif, setSavingExif] = useState(false);
+  const [exifDraft, setExifDraft] = useState<ExifDraft>(emptyExifDraft);
 
   const filteredImages = useMemo(
     () => images.filter((img) => doesMatchFilter(img, filterType)),
@@ -352,6 +513,9 @@ export default function Gallery() {
       .then((data) => {
         data.forEach((img: ImageItem) => updateLocalImage(img));
         setImages(data);
+        setSelectedImageMeta(prev =>
+          prev ? data.find((img: ImageItem) => img.id === prev.id) ?? prev : prev
+        );        
         setSyncStatus(getSyncStatus());
         addLog(`Fetched ${data.length} image(s) from server.`);
       })
@@ -382,6 +546,15 @@ export default function Gallery() {
       return new Set(filtered);
     });
   }, [images]);
+
+  useEffect(() => {
+    if (!selectedImageMeta) {
+      setIsEditingExif(false);
+      setExifDraft(emptyExifDraft);
+      return;
+    }
+    setExifDraft(createDraftFromExif(selectedImageMeta.exif));
+  }, [selectedImageMeta]);
 
   useEffect(() => {
     if (!viewerContainerRef.current) return;
@@ -455,6 +628,60 @@ export default function Gallery() {
     if (selectedIds.size === 0) return;
     setSelectedIds(new Set());
     addLog("Cleared selection.");
+  };
+
+  const beginExifEdit = () => {
+    if (!selectedImageMeta) {
+      alert("Please select an image first.");
+      return;
+    }
+    setExifDraft(createDraftFromExif(selectedImageMeta.exif));
+    setIsEditingExif(true);
+  };
+
+  const cancelExifEdit = () => {
+    if (selectedImageMeta) {
+      setExifDraft(createDraftFromExif(selectedImageMeta.exif));
+    } else {
+      setExifDraft(emptyExifDraft);
+    }
+    setIsEditingExif(false);
+  };
+
+  const handleSaveExif = async () => {
+    if (!selectedImageMeta) return;
+    setSavingExif(true);
+    try {
+      const payload = draftToPayload(exifDraft);
+      const response = await fetch(`http://localhost:4000/images/${selectedImageMeta.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ exif: payload }),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `Server error (${response.status})`);
+      }
+
+      const result = await response.json();
+      if (!result?.image) {
+        throw new Error("Server did not return an updated image.");
+      }
+
+      const updatedImage: ImageItem = result.image;
+      setImages((prev) => prev.map((img) => (img.id === updatedImage.id ? updatedImage : img)));
+      setSelectedImageMeta(updatedImage);
+      updateLocalImage(updatedImage);
+      setIsEditingExif(false);
+      addLog("EXIF metadata updated.");
+    } catch (error: any) {
+      const message = error?.message || "Unknown error";
+      addLog(`Failed to update EXIF: ${message}`, "error");
+      alert(`Failed to update EXIF metadata: ${message}`);
+    } finally {
+      setSavingExif(false);
+    }
   };
 
   const base64ToUint8Array = (base64: string) => {
@@ -1028,6 +1255,97 @@ export default function Gallery() {
                 {batchDeleting ? "🗑️ Deleting..." : "🗑️ Delete Selected"}
               </button>
             </div>
+          </div>
+
+          <div style={styles.section}>
+            <h4 style={{ margin: 0 }}>EXIF Metadata</h4>
+            {!selectedImageMeta ? (
+              <p style={styles.helperText}>Select an image to inspect and edit EXIF fields.</p>
+            ) : !isEditingExif ? (
+              <>
+                <ul style={styles.exifList}>
+                  {exifFieldsConfig.map(({ key, label }) => (
+                    <li key={key}>
+                      <strong>{label}:</strong>{" "}
+                      {key === "dateTimeOriginal"
+                        ? formatExifDate(selectedImageMeta.exif?.[key])
+                        : formatExifValue(selectedImageMeta.exif?.[key])}
+                    </li>
+                  ))}
+                </ul>
+                <div style={styles.exifActions}>
+                  <button
+                    onClick={beginExifEdit}
+                    style={{
+                      padding: "8px 12px",
+                      borderRadius: 8,
+                      border: "none",
+                      fontWeight: 600,
+                      cursor: selectedImageMeta ? "pointer" : "not-allowed",
+                      background: "#0ea5e9",
+                      color: "#fff",
+                      flex: "1 1 140px",
+                    }}
+                  >
+                    ✏️ Edit EXIF
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={styles.exifForm}>
+                  {exifFieldsConfig.map((field) => {
+                    const inputType = field.type === "datetime" ? "datetime-local" : field.type;
+                    return (
+                      <label key={field.key} style={styles.exifLabel}>
+                        <span>{field.label}</span>
+                        <input
+                          type={inputType}
+                          step={field.step}
+                          value={exifDraft[field.key]}
+                          onChange={(event) =>
+                            setExifDraft((prev) => ({ ...prev, [field.key]: event.target.value }))
+                          }
+                          style={styles.exifInput}
+                        />
+                      </label>
+                    );
+                  })}
+                </div>
+                <div style={styles.exifActions}>
+                  <button
+                    onClick={handleSaveExif}
+                    disabled={savingExif}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 10,
+                      border: "none",
+                      fontWeight: 600,
+                      background: savingExif ? "#94a3b8" : "#22c55e",
+                      color: "#fff",
+                      cursor: savingExif ? "not-allowed" : "pointer",
+                      flex: "1 1 140px",
+                    }}
+                  >
+                    {savingExif ? "💾 Saving..." : "💾 Save EXIF"}
+                  </button>
+                  <button
+                    onClick={cancelExifEdit}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 10,
+                      border: "1px solid #cbd5f5",
+                      fontWeight: 600,
+                      background: "#fff",
+                      color: "#0f172a",
+                      flex: "1 1 120px",
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </aside>
 

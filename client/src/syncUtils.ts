@@ -34,6 +34,7 @@ export const loadLocalImages = (): LocalImageItem[] => {
         thumbnail: img.thumbnail || `/thumbnails/thumb-${img.filename}`,
         original: img.original || `/uploads/images/${img.filename}`,
         mimetype: img.mimetype || 'image/jpeg',
+        exif: img.exif || null,
         syncStatus: img.syncStatus || 'synced',
         lastModified:
           typeof img.lastModified === 'number'
@@ -93,6 +94,7 @@ export const updateLocalImage = (image: ImageItem): void => {
     thumbnail: image.thumbnail || `/thumbnails/thumb-${image.filename}`,
     original: image.original || `/uploads/images/${image.filename}`,
     mimetype: image.mimetype || 'image/jpeg',
+    exif: image.exif || null,
     lastModified: new Date(image.updatedAt || image.createdAt || Date.now()).getTime(),
     syncStatus: 'synced',
   };
