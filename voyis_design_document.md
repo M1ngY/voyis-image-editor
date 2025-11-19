@@ -54,12 +54,66 @@ graph TD;
 ### 4.1 Potential Improvements
 - Introduce versioning or revision history
 - Prompt user to manually resolve conflicts when critical data mismatch is detected
+- Diffing strategy for large batches:
+  - Break sync payloads into chunks ( ≈200 entries) to cap memory usage per request.
+  - Build hashed lookup tables / bloom filters client-side to quickly detect removals before requesting full metadata.
+  - Support server-side “since lastSync” queries to return incremental deltas instead of full table scans.
+  - Maintain a conflict queue so the UI can stream conflicts gradually, preventing freezes when thousands of items diverge.
+- Conflict handling detail:
+  - Every image record carries `updatedAt` + `revision`. When server detects `serverUpdatedAt > localLastModified`, entry is staged as potential conflict.
+  - UI presents side-by-side comparison (server vs local), along with actions: **Keep Local** (default) or **Apply Server**.
+  - Choosing “Apply Server” triggers PATCH back to local cache + activity log entry, ensuring user decisions are auditable.
+  - Even when “Local Always Wins” auto-resolves，系统仍将冲突写入日志，并可导出 CSV 供审计使用。
+
+---
+
+## 5. UI / UX Blueprint
+
+### 5.1 Wireframes
+
+```mermaid
+flowchart TD
+  A[Launch App] --> B{Gallery View}
+  B -->|Select Image| C[Single Viewer]
+  B -->|Upload| D[Upload Drawer]
+  B -->|Sync| E[Sync Panel]
+  C -->|Export/Upload Crop| F[WASM Toggle & Actions]
+  D -->|Drop Files| G[(Progress List)]
+  E -->|Resolve Conflicts| H[Conflict Modal]
+```
+
+| Screen | Key Regions | Notes |
+|--------|-------------|-------|
+| Gallery | Control panel (upload/sync/folder config), filters, virtualized grid, activity log | Desktop-first layout with responsive breakpoint ≥ 1280px |
+| Single Viewer | Toolbar (WASM toggle, export/upload buttons), canvas area, EXIF sidebar | Supports keyboard shortcuts (←/→ to change selection) |
+| Upload Drawer | Drop zone, queued files with progress, error badges | Stays docked on right, non-blocking |
+| Sync Panel | Status summary, pending/conflict lists, CTA buttons | Presents conflict cards with compare action |
+
+### 5.2 User Journey
+
+1. **Startup** → Gallery preloads cached thumbnails and shows loading skeletons while remote data is fetched.
+2. **Filtering** → Filter pills toggle active states; the virtualized grid re-renders instantly.
+3. **Uploading** → Upload drawer slides in; user drags files.
+   - Each row displays thumbnail, size, and status pill (Uploading / Success / Failed).
+   - Summary card shows completed / remaining counts and total bytes.
+4. **Single Viewer** → Double-click opens HD preview + EXIF sidebar; toolbar exposes WASM toggle with tooltip explaining benefits.
+5. **Crop / Export** → Action buttons trigger WASM pipeline; inline progress toast appears, followed by success/failure notification.
+6. **Sync** → Control panel CTA shows last-sync timestamp; while running, button turns into spinner + “Syncing…”. Conflicts trigger a modal comparing server vs local versions.
+
+### 5.3 Feedback & Skeleton States
+
+| Scenario | Loading Skeleton | Success Prompt | Error Prompt |
+|----------|------------------|----------------|--------------|
+| Gallery initial load | Card placeholders (gray blocks with shimmer), log list shows phantom rows | Top toast “Loaded N images” | Red toast “Failed to fetch images” + Retry link |
+| Upload drawer | Each file row starts as gray bar with progress from 0% | Inline green `✓ Uploaded` + “Open in viewer” link | Inline red `✗ Failed` with “Retry” button |
+| Viewer WASM actions | Thin progress bar above canvas + label “Optimizing…” | Toast “Exported as WebP (45% smaller)” | Red toast “WASM failed, reverted to PNG” |
+| Sync | Control panel button shows spinner + “Syncing…” | Log adds green entry “Server synced (added X, removed Y)” | Button reverts + warning banner suggesting retry |
 
 ---
 
 ## 5. Scalability Considerations
 
-### 5.1 UI ✅ IMPLEMENTED
+### 5.1 UI
 - **Virtualized rendering**: Implemented using `react-window` for large galleries
   - Automatically enabled when gallery has more than 50 images
   - Uses `FixedSizeGrid` for efficient rendering of image thumbnails
@@ -67,6 +121,11 @@ graph TD;
   - Maintains all existing functionality (selection, filtering, double-click, etc.)
   - Falls back to standard grid rendering for smaller galleries (< 50 images)
 - **Lazy-load images**: Images use `loading="lazy"` attribute for deferred loading
+- **Viewer tiling pipeline (planned)**:
+  - Preprocess large images into 256×256 tiles via `sharp` during upload/export.
+  - Viewer requests tiles based on zoom level + viewport, avoiding full-resolution decode.
+  - Maintain in-memory tile cache with LRU eviction; stale tiles flushed when zoom level changes.
+  - Allows smooth pan/zoom for multi-megapixel imagery while keeping memory usage bounded.
 
 ### 5.2 API & Database
 - Use indexed queries for large metadata tables
@@ -76,12 +135,16 @@ graph TD;
 ### 5.3 Storage
 - Support compression for older files
 - Provide hooks to integrate with cloud storage solutions for large-scale use
+- Streaming ingestion:
+  - Leverage chunked uploads (multipart + resumable protocol) so Electron client can send large files without loading them fully in memory.
+  - API writes directly to disk/remote storage via streams, enabling progress reporting and resumability.
+  - Downstream processing (thumbnail, WASM optimization) can operate on streams/pipes instead of temporary files for lower I/O overhead.
 
 ---
 
 ## 6. Optional Enhancements
 
-### 6.1 WASM-based Image Operations ✅ IMPLEMENTED
+### 6.1 WASM-based Image Operations
 - **Implementation**: Uses `@squoosh/lib` for browser-compatible WASM image processing
 - **Features**:
   - Client-side image optimization using WebAssembly
@@ -99,13 +162,13 @@ graph TD;
   - No Node.js version compatibility issues (runs entirely in browser)
   - Reduces bandwidth and storage requirements
 
-### 6.2 Metadata Editing ✅ IMPLEMENTED
+### 6.2 Metadata Editing 
 - Use `exifr` to extract and optionally edit EXIF metadata
 - Sync metadata changes to PostgreSQL
 
 ---
 
-## 7. Testing ✅ IMPLEMENTED
+## 7. Testing 
 - **Jest + React Testing Library**: Implemented for UI component testing
   - Test setup configured with jsdom environment
   - Tests for `syncUtils` module covering all utility functions
@@ -134,6 +197,9 @@ graph TD;
 - Offline-first capability with client-side SQLite and sync queue
 - Full-text search for image metadata
 - Multi-window support in Electron
+- Folder Config JSON improvements:
+  - **Corruption detection**: Validate JSON against schema (Ajv) before persisting; include checksum/hash to detect tampering, and keep last-known-good snapshot for quick rollback.
+  - **Fault tolerance**: When batch-importing configs, wrap each entry in transactional guard—skip invalid folders, write errors to activity log, and offer “re-import failed items” CTA so a single corrupt record不会阻断整个导入。
 
 ---
 
