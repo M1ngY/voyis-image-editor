@@ -63,7 +63,7 @@ graph TD;
   - Every image record carries `updatedAt` + `revision`. When server detects `serverUpdatedAt > localLastModified`, entry is staged as potential conflict.
   - UI presents side-by-side comparison (server vs local), along with actions: **Keep Local** (default) or **Apply Server**.
   - Choosing “Apply Server” triggers PATCH back to local cache + activity log entry, ensuring user decisions are auditable.
-  - Even when “Local Always Wins” auto-resolves，系统仍将冲突写入日志，并可导出 CSV 供审计使用。
+  - Even when "Local Always Wins" auto-resolves, the system still records conflicts in the activity log and can export a CSV for audit trails.
 
 ---
 
@@ -91,13 +91,17 @@ flowchart TD
 
 ### 5.1.1 Production UI Snapshot
 
-Actual gallery UI (Electron renderer) implements the above blueprint with the following visual hierarchy:
+Actual gallery UI (Electron renderer) implements the above blueprint with the following visual hierarchy (see `docs/screenshots/gallery.png`):
+
+![Gallery layout](docs/screenshots/gallery.png)
 
 - **Left rail**: Control panel cards for Upload/Sync/Folder Config, Sync Strategy reminder (“Local Always Wins”), filter pills, batch actions, EXIF placeholder, Activity Log.
 - **Center content**: Tabbed view (`Gallery` / `Single Viewer`). Gallery shows virtualized cards (thumbnail, filename, size, MIME) with corner delete buttons; activity log at bottom streams operations (fetch, delete, sync) with timestamps.
 - **Color cues**: Primary blue for actions, green for sync success, red for destructive operations, matching design tokens described in UI spec.
 
-Screenshots: see `docs/screenshots/gallery.png`（same as attached reference）。
+Activity log close-up: 
+
+![Activity log view](docs/screenshots/activity-log.png)
 
 ### 5.2 User Journey
 
@@ -241,7 +245,7 @@ If native WebP path fails (e.g., canvas context unavailable), processor falls ba
 - Multi-window support in Electron
 - Folder Config JSON improvements:
   - **Corruption detection**: Validate JSON against schema (Ajv) before persisting; include checksum/hash to detect tampering, and keep last-known-good snapshot for quick rollback.
-  - **Fault tolerance**: When batch-importing configs, wrap each entry in transactional guard—skip invalid folders, write errors to activity log, and offer “re-import failed items” CTA so a single corrupt record不会阻断整个导入。
+  - **Fault tolerance**: When batch-importing configs, wrap each entry in a transactional guard—skip invalid folders, write errors to the activity log, and offer a “re-import failed items” CTA so a single corrupt record will not block the overall import.
 
 ---
 
