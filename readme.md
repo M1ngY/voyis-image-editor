@@ -79,3 +79,13 @@ npm run test:coverage # Generate coverage report
 - **API Endpoints**: Full endpoint testing with mocked dependencies
 - **Coverage threshold**: 50% for branches, functions, lines, and statements
 
+## Continuous Integration
+
+GitHub Actions automatically runs the full test matrix on every push and pull request:
+
+- `client` job installs dependencies with `npm ci` and runs `npm test -- --runInBand`
+- `server` job (triggered after the client job passes) installs dependencies and runs its Jest suite
+- Both jobs execute on Node.js 20 and leverage dependency caching for faster builds
+
+You can inspect the workflow definition in `.github/workflows/ci.yml` or view runs in the repository’s *Actions* tab.
+
