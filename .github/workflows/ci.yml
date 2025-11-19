@@ -37,6 +37,8 @@ jobs:
     name: Server Tests
     runs-on: ubuntu-latest
     needs: client-tests
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
     defaults:
       run:
         working-directory: server
