@@ -9,8 +9,14 @@ interface VoyisSelectedFile {
   data: string
 }
 
+interface FolderConfigResult {
+  files: VoyisSelectedFile[]
+  configPath: string
+}
+
 declare interface Window {
   voyisAPI?: {
     selectImages: () => Promise<VoyisSelectedFile[]>
+    selectFolderConfig: () => Promise<FolderConfigResult | null>
   }
 }

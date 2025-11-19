@@ -12,6 +12,7 @@ const prisma = new PrismaClient();
 const PORT = process.env.PORT || 4000;
 const uploadPath = path.join(__dirname, 'uploads', 'images');
 const thumbnailPath = path.join(__dirname, 'uploads', 'thumbnails');
+const fsPromises = fs.promises;
 
 // Ensure upload directory exists
 if (!fs.existsSync(uploadPath)) {
@@ -28,6 +29,17 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
 });
 const upload = multer({ storage });
+
+const buildImageResponse = (img) => ({
+  id: img.id,
+  filename: img.filename,
+  mimetype: img.mimetype,
+  size: img.size,
+  createdAt: img.createdAt,
+  updatedAt: img.updatedAt,
+  thumbnail: `/thumbnails/thumb-${img.filename}`,
+  original: `/uploads/images/${img.filename}`,
+});
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -200,20 +212,112 @@ app.delete("/images/:id", async (req, res) => {
   }
 });
 
-app.get("/images", async (req, res) => {
-  const images = await prisma.image.findMany({
-    orderBy: { createdAt: "desc" }
-  });
+// Update image metadata (rename currently supported)
+app.put("/images/:id", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid image ID' });
+    }
 
-  res.json(
-    images.map((img) => ({
-      id: img.id,
-      filename: img.filename,
-      createdAt: img.createdAt,
-      size: img.size,
-      thumbnail: `/thumbnails/thumb-${img.filename}`
-    }))
-  );
+    const { filename } = req.body || {};
+    if (!filename || typeof filename !== 'string') {
+      return res.status(400).json({ error: 'filename is required' });
+    }
+
+    const sanitized = path.basename(filename.trim());
+    if (!sanitized) {
+      return res.status(400).json({ error: 'filename cannot be empty' });
+    }
+
+    if (sanitized.includes('/') || sanitized.includes('\\')) {
+      return res.status(400).json({ error: 'filename cannot contain path separators' });
+    }
+
+    const image = await prisma.image.findUnique({ where: { id } });
+    if (!image) {
+      return res.status(404).json({ error: 'Image not found' });
+    }
+
+    if (sanitized === image.filename) {
+      return res.json({
+        success: true,
+        message: 'No changes applied',
+        image: buildImageResponse(image),
+      });
+    }
+
+    const newFilePath = path.join(uploadPath, sanitized);
+    if (fs.existsSync(newFilePath)) {
+      return res.status(409).json({ error: 'A file with the requested name already exists' });
+    }
+
+    try {
+      await fsPromises.rename(image.filepath, newFilePath);
+    } catch (err) {
+      console.error('Failed to rename image file:', err);
+      return res.status(500).json({ error: 'Failed to rename image file', details: err.message });
+    }
+
+    const oldThumbPath = path.join(thumbnailPath, `thumb-${image.filename}`);
+    const newThumbPath = path.join(thumbnailPath, `thumb-${sanitized}`);
+    if (fs.existsSync(oldThumbPath)) {
+      try {
+        await fsPromises.rename(oldThumbPath, newThumbPath);
+      } catch (err) {
+        console.warn(`Failed to rename thumbnail ${oldThumbPath}:`, err.message);
+      }
+    }
+
+    const updatedImage = await prisma.image.update({
+      where: { id },
+      data: {
+        filename: sanitized,
+        filepath: newFilePath,
+      },
+    });
+
+    res.json({
+      success: true,
+      image: buildImageResponse(updatedImage),
+      message: 'Image updated successfully',
+    });
+  } catch (err) {
+    console.error('Update error:', err);
+    res.status(500).json({ error: 'Failed to update image', details: err.message });
+  }
+});
+
+app.get("/images", async (req, res) => {
+  try {
+    const images = await prisma.image.findMany({
+      orderBy: { createdAt: "desc" }
+    });
+
+    res.json(images.map(buildImageResponse));
+  } catch (err) {
+    console.error('Failed to list images:', err);
+    res.status(500).json({ error: 'Failed to fetch images' });
+  }
+});
+
+app.get("/images/:id", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid image ID' });
+    }
+
+    const image = await prisma.image.findUnique({ where: { id } });
+    if (!image) {
+      return res.status(404).json({ error: 'Image not found' });
+    }
+
+    res.json(buildImageResponse(image));
+  } catch (err) {
+    console.error('Failed to fetch image:', err);
+    res.status(500).json({ error: 'Failed to fetch image' });
+  }
 });
 
 app.use("/thumbnails", express.static(path.join(__dirname, "uploads", "thumbnails")));

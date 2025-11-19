@@ -84,6 +84,66 @@ ipcMain.handle("voyis:select-images", async () => {
   );
   return files;
 });
+ipcMain.handle("voyis:select-folder-config", async () => {
+  if (!win) {
+    throw new Error("Main window is not ready");
+  }
+  const configDialog = await dialog.showOpenDialog(win, {
+    title: "Select folder config (JSON)",
+    properties: ["openFile"],
+    filters: [{ name: "JSON", extensions: ["json"] }]
+  });
+  if (configDialog.canceled || configDialog.filePaths.length === 0) {
+    return null;
+  }
+  const configPath = configDialog.filePaths[0];
+  const raw = await promises.readFile(configPath, "utf-8");
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Invalid JSON: ${err.message}`);
+  }
+  const folders = Array.isArray(parsed) ? parsed : parsed.folders || parsed.sources || [];
+  if (!Array.isArray(folders) || folders.length === 0) {
+    throw new Error('Config must include a non-empty "folders" array');
+  }
+  const files = [];
+  const readDirectory = async (dirPath, extensions, recursive = false) => {
+    const entries = await promises.readdir(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        if (recursive) {
+          await readDirectory(fullPath, extensions, recursive);
+        }
+        continue;
+      }
+      const ext = path.extname(entry.name).replace(".", "").toLowerCase();
+      if (extensions && extensions.length > 0 && !extensions.includes(ext)) {
+        continue;
+      }
+      const [buffer, stats] = await Promise.all([
+        promises.readFile(fullPath),
+        promises.stat(fullPath)
+      ]);
+      files.push({
+        path: fullPath,
+        name: entry.name,
+        type: getMimeType(fullPath),
+        size: stats.size,
+        lastModified: stats.mtimeMs,
+        data: buffer.toString("base64")
+      });
+    }
+  };
+  for (const folder of folders) {
+    if (!(folder == null ? void 0 : folder.path)) continue;
+    const allowedExtensions = Array.isArray(folder.types) ? folder.types.map((t) => t.toLowerCase()) : void 0;
+    await readDirectory(folder.path, allowedExtensions, Boolean(folder.recursive));
+  }
+  return { files, configPath };
+});
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();

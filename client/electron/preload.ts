@@ -25,4 +25,5 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
 
 contextBridge.exposeInMainWorld('voyisAPI', {
   selectImages: () => ipcRenderer.invoke('voyis:select-images'),
+  selectFolderConfig: () => ipcRenderer.invoke('voyis:select-folder-config'),
 })

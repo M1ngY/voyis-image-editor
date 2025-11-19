@@ -21,5 +21,6 @@ electron.contextBridge.exposeInMainWorld("ipcRenderer", {
   // ...
 });
 electron.contextBridge.exposeInMainWorld("voyisAPI", {
-  selectImages: () => electron.ipcRenderer.invoke("voyis:select-images")
+  selectImages: () => electron.ipcRenderer.invoke("voyis:select-images"),
+  selectFolderConfig: () => electron.ipcRenderer.invoke("voyis:select-folder-config")
 });

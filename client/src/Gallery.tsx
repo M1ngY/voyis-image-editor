@@ -24,6 +24,13 @@ interface UploadProgress {
   error?: string;
 }
 
+interface UploadSummary {
+  totalFiles: number;
+  totalSize: number;
+  success: number;
+  corrupted: number;
+}
+
 type TabKey = "gallery" | "viewer";
 type LogLevel = "info" | "warning" | "error";
 
@@ -63,7 +70,7 @@ const logEntryStyle = (level: LogLevel): CSSProperties => ({
   gap: 4,
 });
 
-const styles = {
+const styles: Record<string, CSSProperties> = {
   page: {
     minHeight: "100vh",
     padding: 24,
@@ -71,16 +78,21 @@ const styles = {
     display: "flex",
     flexDirection: "column",
     gap: 16,
-    boxSizing: "border-box" as const,
+    boxSizing: "border-box",
   },
+
   mainContent: {
     display: "flex",
-    flexWrap: "wrap" as const,
+    flexWrap: "wrap",
     gap: 16,
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
   },
+
   leftPanel: {
-    flex: "0 0 320px",
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: "320px", // ← 替换 flex: "0 0 320px"
     minWidth: 280,
     background: "#fff",
     borderRadius: 16,
@@ -90,6 +102,7 @@ const styles = {
     flexDirection: "column",
     gap: 16,
   },
+
   section: {
     background: "#f8fafc",
     borderRadius: 12,
@@ -98,12 +111,14 @@ const styles = {
     flexDirection: "column",
     gap: 12,
   },
+
   helperText: {
     margin: 0,
     fontSize: 13,
     color: "#64748b",
     lineHeight: 1.4,
   },
+
   badge: {
     alignSelf: "flex-start",
     padding: "4px 8px",
@@ -114,8 +129,11 @@ const styles = {
     color: "#475569",
     border: "1px solid #e2e8f0",
   },
+
   centerPanel: {
-    flex: "1 1 420px",
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: "420px", // ← 替换 flex: "1 1 420px"
     minWidth: 320,
     background: "#fff",
     borderRadius: 16,
@@ -123,6 +141,7 @@ const styles = {
     display: "flex",
     flexDirection: "column",
   },
+
   tabContent: {
     padding: 20,
     flex: 1,
@@ -130,11 +149,13 @@ const styles = {
     flexDirection: "column",
     gap: 16,
   },
+
   galleryGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
     gap: 16,
   },
+
   card: {
     border: "1px solid #e2e8f0",
     borderRadius: 12,
@@ -147,6 +168,7 @@ const styles = {
     background: "#fff",
     transition: "box-shadow 0.2s ease, transform 0.2s ease",
   },
+
   viewerPanel: {
     flex: 1,
     minHeight: 320,
@@ -159,25 +181,28 @@ const styles = {
     alignItems: "center",
     justifyContent: "center",
     gap: 16,
-    textAlign: "center" as const,
+    textAlign: "center",
   },
+
   bottomPanel: {
     background: "#fff",
     borderRadius: 16,
     padding: 20,
-    boxShadow: "0 15px 30pxrgba(15,23,42,0.08)",
+    boxShadow: "0 15px 30px rgba(15,23,42,0.08)",
     display: "flex",
     flexDirection: "column",
     gap: 12,
   },
+
   logList: {
     maxHeight: 220,
-    overflowY: "auto" as const,
+    overflowY: "auto",
     display: "flex",
     flexDirection: "column",
     gap: 10,
   },
 };
+
 
 const formatBytes = (size: number | undefined) => {
   if (size === undefined) return "--";
@@ -198,6 +223,14 @@ const formatDate = (iso: string | undefined) => {
   return new Date(iso).toLocaleString();
 };
 
+const formatBytesDetailed = (bytes: number) => {
+  if (bytes === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const index = Math.floor(Math.log(bytes) / Math.log(1024));
+  const value = bytes / Math.pow(1024, index);
+  return `${value.toFixed(value < 10 && index > 0 ? 1 : 0)} ${units[index]}`;
+};
+
 export default function Gallery() {
   const [images, setImages] = useState<ImageItem[]>([]);
   const [selectedImageMeta, setSelectedImageMeta] = useState<ImageItem | null>(null);
@@ -205,6 +238,7 @@ export default function Gallery() {
   const [activityLog, setActivityLog] = useState<LogEntry[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress[]>([]);
+  const [uploadSummary, setUploadSummary] = useState<UploadSummary | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState(getSyncStatus());
@@ -308,6 +342,14 @@ export default function Gallery() {
     setUploading(true);
     addLog(`Uploading ${fileArray.length} file(s).`);
 
+    const totalSize = fileArray.reduce((acc, file) => acc + (file.size || 0), 0);
+    setUploadSummary({
+      totalFiles: fileArray.length,
+      totalSize,
+      success: 0,
+      corrupted: 0,
+    });
+
     const initialProgress: UploadProgress[] = fileArray.map((file) => ({
       filename: file.name,
       progress: 0,
@@ -350,6 +392,9 @@ export default function Gallery() {
               console.error("Failed to parse upload response:", error);
             }
             addLog(`Upload succeeded: ${file.name}`);
+            setUploadSummary((prev) =>
+              prev ? { ...prev, success: prev.success + 1 } : prev
+            );
             setUploadProgress((prev) =>
               prev.map((item, idx) =>
                 idx === i ? { ...item, progress: 100, status: "success" } : item
@@ -357,6 +402,9 @@ export default function Gallery() {
             );
           } else {
             addLog(`Upload failed: ${file.name}`, "error");
+             setUploadSummary((prev) =>
+              prev ? { ...prev, corrupted: prev.corrupted + 1 } : prev
+            );
             setUploadProgress((prev) =>
               prev.map((item, idx) =>
                 idx === i
@@ -373,6 +421,9 @@ export default function Gallery() {
 
         xhr.addEventListener("error", () => {
           addLog(`Network error during upload: ${file.name}`, "error");
+          setUploadSummary((prev) =>
+            prev ? { ...prev, corrupted: prev.corrupted + 1 } : prev
+          );
           setUploadProgress((prev) =>
             prev.map((item, idx) =>
               idx === i
@@ -396,6 +447,9 @@ export default function Gallery() {
       } catch (error) {
         console.error("Upload error:", error);
         addLog(`Upload failed: ${file.name}`, "error");
+        setUploadSummary((prev) =>
+          prev ? { ...prev, corrupted: prev.corrupted + 1 } : prev
+        );
         setUploadProgress((prev) =>
           prev.map((item, idx) =>
             idx === i ? { ...item, status: "error", error: "Upload failed" } : item
@@ -443,6 +497,40 @@ export default function Gallery() {
     }
 
     fileInputRef.current?.click();
+  };
+
+  const handleFolderConfigUpload = async () => {
+    if (!window.voyisAPI?.selectFolderConfig) {
+      alert("Folder config upload is only available inside Electron.");
+      return;
+    }
+
+    try {
+      const result = await window.voyisAPI.selectFolderConfig();
+      if (!result || !result.files || result.files.length === 0) {
+        addLog("Folder config selection cancelled.", "warning");
+        return;
+      }
+
+      addLog(
+        `Loaded folder config (${result.files.length} file(s)) from ${result.configPath}.`
+      );
+
+      const browserFiles = result.files.map((file) => {
+        const bytes = base64ToUint8Array(file.data);
+        return new File([bytes], file.name, {
+          type: file.type || "application/octet-stream",
+          lastModified: file.lastModified || Date.now(),
+        });
+      });
+
+      await uploadFiles(browserFiles);
+    } catch (error: any) {
+      console.error("Folder config import error:", error);
+      const message = error?.message || "Unknown error";
+      addLog(`Folder config import failed: ${message}`, "error");
+      alert(`Failed to import folder config: ${message}`);
+    }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -572,6 +660,22 @@ export default function Gallery() {
               >
                 {syncing ? "⏳ Syncing..." : "🔄 Sync"}
               </button>
+              <button
+                onClick={handleFolderConfigUpload}
+                disabled={uploading || syncing}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: 10,
+                  border: "none",
+                  fontWeight: 600,
+                  cursor: uploading || syncing ? "not-allowed" : "pointer",
+                  background: uploading || syncing ? "#94a3b8" : "#6b21a8",
+                  color: "#fff",
+                  flex: "1 1 120px",
+                }}
+              >
+                📂 Folder Config
+              </button>
             </div>
             {uploading && (
               <span style={styles.helperText}>
@@ -638,7 +742,35 @@ export default function Gallery() {
           <div style={styles.tabContent}>
             {activeTab === "gallery" ? (
               <>
-                {uploadProgress.length > 0 && (
+      {uploadSummary && (
+        <div
+          style={{
+            marginBottom: 16,
+            padding: 16,
+            background: "#e0f2fe",
+            borderRadius: 12,
+            display: "flex",
+            gap: 24,
+            flexWrap: "wrap",
+            fontSize: 14,
+          }}
+        >
+          <div>
+            <strong>Total files:</strong> {uploadSummary.totalFiles}
+          </div>
+          <div>
+            <strong>Total size:</strong> {formatBytesDetailed(uploadSummary.totalSize)}
+          </div>
+          <div>
+            <strong>Uploaded:</strong> {uploadSummary.success}
+          </div>
+          <div style={{ color: uploadSummary.corrupted > 0 ? "#dc2626" : "#0f172a" }}>
+            <strong>Corrupted:</strong> {uploadSummary.corrupted}
+          </div>
+        </div>
+      )}
+
+      {uploadProgress.length > 0 && (
                   <div style={{ background: "#f8fafc", borderRadius: 12, padding: 16 }}>
                     {uploadProgress.map((progress, idx) => (
                       <div key={idx} style={{ marginBottom: 10 }}>

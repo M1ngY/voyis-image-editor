@@ -31,9 +31,15 @@ interface VoyisSelectedFile {
   data: string
 }
 
+interface FolderConfigResult {
+  files: VoyisSelectedFile[]
+  configPath: string
+}
+
 interface Window {
   ipcRenderer: import('electron').IpcRenderer
   voyisAPI?: {
     selectImages: () => Promise<VoyisSelectedFile[]>
+    selectFolderConfig: () => Promise<FolderConfigResult | null>
   }
 }

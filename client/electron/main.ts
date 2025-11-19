@@ -105,6 +105,85 @@ ipcMain.handle('voyis:select-images', async () => {
   return files
 })
 
+ipcMain.handle('voyis:select-folder-config', async () => {
+  if (!win) {
+    throw new Error('Main window is not ready')
+  }
+
+  const configDialog = await dialog.showOpenDialog(win, {
+    title: 'Select folder config (JSON)',
+    properties: ['openFile'],
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  })
+
+  if (configDialog.canceled || configDialog.filePaths.length === 0) {
+    return null
+  }
+
+  const configPath = configDialog.filePaths[0]
+  const raw = await fs.readFile(configPath, 'utf-8')
+
+  let parsed: any
+  try {
+    parsed = JSON.parse(raw)
+  } catch (err) {
+    throw new Error(`Invalid JSON: ${(err as Error).message}`)
+  }
+
+  const folders = Array.isArray(parsed)
+    ? parsed
+    : parsed.folders || parsed.sources || []
+
+  if (!Array.isArray(folders) || folders.length === 0) {
+    throw new Error('Config must include a non-empty "folders" array')
+  }
+
+  const files: any[] = []
+
+  const readDirectory = async (dirPath: string, extensions?: string[], recursive = false) => {
+    const entries = await fs.readdir(dirPath, { withFileTypes: true })
+
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name)
+      if (entry.isDirectory()) {
+        if (recursive) {
+          await readDirectory(fullPath, extensions, recursive)
+        }
+        continue
+      }
+
+      const ext = path.extname(entry.name).replace('.', '').toLowerCase()
+      if (extensions && extensions.length > 0 && !extensions.includes(ext)) {
+        continue
+      }
+
+      const [buffer, stats] = await Promise.all([
+        fs.readFile(fullPath),
+        fs.stat(fullPath),
+      ])
+
+      files.push({
+        path: fullPath,
+        name: entry.name,
+        type: getMimeType(fullPath),
+        size: stats.size,
+        lastModified: stats.mtimeMs,
+        data: buffer.toString('base64'),
+      })
+    }
+  }
+
+  for (const folder of folders) {
+    if (!folder?.path) continue
+    const allowedExtensions = Array.isArray(folder.types)
+      ? folder.types.map((t: string) => t.toLowerCase())
+      : undefined
+    await readDirectory(folder.path, allowedExtensions, Boolean(folder.recursive))
+  }
+
+  return { files, configPath }
+})
+
 // Quit when all windows are closed, except on macOS. There, it's common
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
