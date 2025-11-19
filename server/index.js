@@ -5,6 +5,7 @@ const { PrismaClient } = require('@prisma/client');
 const path = require('path');
 const fs = require('fs');
 const sharp = require('sharp');
+const archiver = require('archiver');
 
 // Set up
 const app = express();
@@ -379,6 +380,66 @@ app.post("/sync", async (req, res) => {
   } catch (err) {
     console.error('Sync endpoint error:', err);
     res.status(500).json({ error: 'Failed to sync', details: err.message });
+  }
+});
+
+app.post("/images/export", async (req, res) => {
+  try {
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids must be a non-empty array' });
+    }
+
+    const parsedIds = [...new Set(ids.map((id) => parseInt(id, 10)).filter((id) => !Number.isNaN(id)))];
+    if (parsedIds.length === 0) {
+      return res.status(400).json({ error: 'No valid image IDs provided' });
+    }
+
+    const images = await prisma.image.findMany({
+      where: { id: { in: parsedIds } },
+    });
+
+    if (images.length === 0) {
+      return res.status(404).json({ error: 'No images found for export' });
+    }
+
+    const filename = `voyis-export-${Date.now()}.zip`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${filename}"`
+    );
+
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    archive.on('error', (err) => {
+      console.error('Archive error:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Failed to build archive', details: err.message });
+      } else {
+        res.end();
+      }
+    });
+
+    archive.pipe(res);
+
+    images.forEach((img) => {
+      if (!fs.existsSync(img.filepath)) {
+        archive.append(`Source file missing: ${img.filename}\n`, {
+          name: `missing-${img.filename}.txt`,
+        });
+        return;
+      }
+      archive.file(img.filepath, { name: img.filename });
+    });
+
+    archive.finalize();
+  } catch (err) {
+    console.error('Batch export error:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to export images', details: err.message });
+    } else {
+      res.end();
+    }
   }
 });
 

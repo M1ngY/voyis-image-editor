@@ -30,6 +30,7 @@ npm run dev
 | `POST` | `/upload` | Upload an image via `multipart/form-data` and generate a thumbnail |
 | `POST` | `/upload/crop` | Upload a cropped image represented as base64 data |
 | `POST` | `/sync` | Diff server state against client-provided metadata for synchronization |
+| `POST` | `/images/export` | Stream a ZIP archive containing the requested image IDs |
 | `PUT` | `/images/:id` | Update metadata (currently supports safe file rename + thumbnail sync) |
 | `DELETE` | `/images/:id` | Remove the image file, thumbnail, and database record |
 

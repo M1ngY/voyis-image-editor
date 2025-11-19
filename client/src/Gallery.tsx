@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, type CSSProperties } from "react";
+import { useEffect, useState, useRef, useMemo, type CSSProperties } from "react";
 import Viewer from "./Viewer";
 import {
   syncWithServer,
@@ -13,8 +13,11 @@ export interface ImageItem {
   id: number;
   filename: string;
   createdAt: string;
+  updatedAt: string;
   size: number;
+  mimetype: string;
   thumbnail: string;
+  original: string;
 }
 
 interface UploadProgress {
@@ -47,6 +50,17 @@ const levelColors: Record<LogLevel, string> = {
   error: "#ef4444",
 };
 
+type FileTypeFilter = "all" | "jpeg" | "png" | "webp" | "tiff" | "other";
+
+const fileTypeLabels: Record<FileTypeFilter, string> = {
+  all: "All",
+  jpeg: "JPG / JPEG",
+  png: "PNG",
+  webp: "WEBP",
+  tiff: "TIF / TIFF",
+  other: "Other",
+};
+
 const tabButtonStyle = (active: boolean): CSSProperties => ({
   flex: 1,
   padding: "14px 18px",
@@ -56,6 +70,18 @@ const tabButtonStyle = (active: boolean): CSSProperties => ({
   borderBottom: active ? "3px solid #0ea5e9" : "3px solid transparent",
   fontWeight: 600,
   fontSize: 15,
+  cursor: active ? "default" : "pointer",
+  transition: "all 0.2s ease",
+});
+
+const filterPillStyle = (active: boolean): CSSProperties => ({
+  padding: "6px 12px",
+  borderRadius: 999,
+  border: active ? "1px solid #2563eb" : "1px solid #cbd5f5",
+  background: active ? "#2563eb" : "#fff",
+  color: active ? "#fff" : "#0f172a",
+  fontSize: 12,
+  fontWeight: 600,
   cursor: active ? "default" : "pointer",
   transition: "all 0.2s ease",
 });
@@ -201,6 +227,35 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: "column",
     gap: 10,
   },
+
+  filterPills: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+
+  selectionToolbar: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+  },
+
+  selectionActions: {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+
+  cardCheckbox: {
+    position: "absolute",
+    top: 10,
+    left: 10,
+    width: 18,
+    height: 18,
+    cursor: "pointer",
+    accentColor: "#2563eb",
+    zIndex: 2,
+  } as CSSProperties,
 };
 
 
@@ -231,6 +286,20 @@ const formatBytesDetailed = (bytes: number) => {
   return `${value.toFixed(value < 10 && index > 0 ? 1 : 0)} ${units[index]}`;
 };
 
+const resolveMimeCategory = (mime?: string): FileTypeFilter => {
+  const normalized = mime?.toLowerCase() || "";
+  if (normalized.includes("jpeg") || normalized.includes("jpg")) return "jpeg";
+  if (normalized.includes("png")) return "png";
+  if (normalized.includes("webp")) return "webp";
+  if (normalized.includes("tif")) return "tiff";
+  return "other";
+};
+
+const doesMatchFilter = (image: ImageItem, filter: FileTypeFilter) => {
+  if (filter === "all") return true;
+  return resolveMimeCategory(image.mimetype) === filter;
+};
+
 export default function Gallery() {
   const [images, setImages] = useState<ImageItem[]>([]);
   const [selectedImageMeta, setSelectedImageMeta] = useState<ImageItem | null>(null);
@@ -245,6 +314,25 @@ export default function Gallery() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const viewerContainerRef = useRef<HTMLDivElement>(null);
   const [viewerSize, setViewerSize] = useState({ width: 800, height: 500 });
+  const [filterType, setFilterType] = useState<FileTypeFilter>("all");
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
+  const [batchDownloading, setBatchDownloading] = useState(false);
+
+  const filteredImages = useMemo(
+    () => images.filter((img) => doesMatchFilter(img, filterType)),
+    [images, filterType]
+  );
+
+  const selectedImages = useMemo(
+    () => images.filter((img) => selectedIds.has(img.id)),
+    [images, selectedIds]
+  );
+
+  const selectedIdList = useMemo(() => Array.from(selectedIds), [selectedIds]);
+
+  const selectionCount = selectedIds.size;
+  const hasSelection = selectionCount > 0;
 
   const addLog = (message: string, level: LogLevel = "info") => {
     setActivityLog((prev) => {
@@ -282,6 +370,18 @@ export default function Gallery() {
     fetchImages();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const validIds = new Set(images.map((img) => img.id));
+      const filtered = Array.from(prev).filter((id) => validIds.has(id));
+      if (filtered.length === prev.size) {
+        return prev;
+      }
+      return new Set(filtered);
+    });
+  }, [images]);
 
   useEffect(() => {
     if (!viewerContainerRef.current) return;
@@ -322,6 +422,39 @@ export default function Gallery() {
       setSyncing(false);
       setSyncStatus(getSyncStatus());
     }
+  };
+
+  const handleFilterChange = (value: FileTypeFilter) => {
+    setFilterType(value);
+    addLog(`Applied filter: ${fileTypeLabels[value]}`);
+  };
+
+  const toggleSelection = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const selectAllFiltered = () => {
+    if (filteredImages.length === 0) {
+      addLog("No images to select for current filter.", "warning");
+      return;
+    }
+    const ids = filteredImages.map((img) => img.id);
+    setSelectedIds(new Set(ids));
+    addLog(`Selected ${ids.length} image(s) based on current filter.`);
+  };
+
+  const clearSelection = () => {
+    if (selectedIds.size === 0) return;
+    setSelectedIds(new Set());
+    addLog("Cleared selection.");
   };
 
   const base64ToUint8Array = (base64: string) => {
@@ -380,13 +513,7 @@ export default function Gallery() {
             try {
               const result = JSON.parse(xhr.responseText);
               if (result.success && result.image) {
-                updateLocalImage({
-                  id: result.image.id,
-                  filename: result.image.filename,
-                  createdAt: result.image.createdAt,
-                  size: result.image.size,
-                  thumbnail: `/thumbnails/${result.thumbnail}`,
-                });
+                updateLocalImage(result.image);
               }
             } catch (error) {
               console.error("Failed to parse upload response:", error);
@@ -546,11 +673,17 @@ export default function Gallery() {
     addLog(`Opened ${img.filename} in viewer.`);
   };
 
-  const handleDelete = async (id: number, filename: string) => {
-    if (!confirm(`Are you sure you want to delete "${filename}"?`)) {
-      return;
+  const deleteImage = async (
+    id: number,
+    filename: string,
+    { confirmBefore = true, logIndividual = true }: { confirmBefore?: boolean; logIndividual?: boolean } = {}
+  ) => {
+    if (confirmBefore && !confirm(`Are you sure you want to delete "${filename}"?`)) {
+      return false;
     }
-    addLog(`Deleting ${filename}...`);
+    if (logIndividual) {
+      addLog(`Deleting ${filename}...`);
+    }
 
     const releaseImageResources = () => {
       const imgs = document.querySelectorAll("img");
@@ -595,26 +728,101 @@ export default function Gallery() {
         } catch {
           errorMessage = errorText || errorMessage;
         }
-        alert(`Failed to delete: ${errorMessage}`);
-        addLog(`Failed to delete ${filename}: ${errorMessage}`, "error");
-        return;
+        if (logIndividual) {
+          addLog(`Failed to delete ${filename}: ${errorMessage}`, "error");
+        }
+        if (confirmBefore) {
+          alert(`Failed to delete: ${errorMessage}`);
+        }
+        return false;
       }
 
       await response.json();
       removeLocalImage(id);
+      setSelectedIds((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
       if (selectedImageMeta?.id === id) {
         setSelectedImageMeta(null);
         setActiveTab("gallery");
       }
-      addLog(`Deleted ${filename}.`);
+      if (logIndividual) {
+        addLog(`Deleted ${filename}.`);
+      }
       fetchImages();
       setSyncStatus(getSyncStatus());
+      return true;
     } catch (error: any) {
       const errorMessage = error.message || "Network error or server unavailable";
-      addLog(`Failed to delete ${filename}: ${errorMessage}`, "error");
-      alert(`Failed to delete image: ${errorMessage}`);
+      if (logIndividual) {
+        addLog(`Failed to delete ${filename}: ${errorMessage}`, "error");
+      }
+      if (confirmBefore) {
+        alert(`Failed to delete image: ${errorMessage}`);
+      }
+      return false;
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    if (!hasSelection || batchDeleting) return;
+    if (!confirm(`Delete ${selectionCount} selected image(s)? This cannot be undone.`)) {
+      return;
+    }
+    setBatchDeleting(true);
+    try {
+      for (const img of selectedImages) {
+        // eslint-disable-next-line no-await-in-loop
+        await deleteImage(img.id, img.filename, { confirmBefore: false, logIndividual: false });
+      }
+      addLog(`Batch deleted ${selectionCount} image(s).`);
+      fetchImages();
+    } catch (error: any) {
+      addLog(`Batch delete failed: ${error?.message || error}`, "error");
+      alert(`Batch delete failed: ${error?.message || "Unknown error"}`);
+    } finally {
+      setBatchDeleting(false);
+      setSelectedIds(new Set());
+    }
+  };
+
+  const handleBatchDownload = async () => {
+    if (!hasSelection || batchDownloading) return;
+    setBatchDownloading(true);
+    try {
+      const response = await fetch("http://localhost:4000/images/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: selectedIdList }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || `Server error (${response.status})`);
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      link.href = url;
+      link.download = `voyis-export-${timestamp}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      addLog(`Exported ${selectionCount} image(s) to ZIP.`);
+    } catch (error: any) {
+      const message = error?.message || "Unknown error";
+      addLog(`Batch export failed: ${message}`, "error");
+      alert(`Failed to download images: ${message}`);
+    } finally {
+      setBatchDownloading(false);
     }
   };
 
@@ -719,10 +927,107 @@ export default function Gallery() {
                 <li>
                   <strong>ID:</strong> {selectedImageMeta.id}
                 </li>
+                <li>
+                  <strong>Type:</strong> {selectedImageMeta.mimetype}
+                </li>
               </ul>
             ) : (
               <p style={styles.helperText}>Double-click a thumbnail to inspect file metadata.</p>
             )}
+          </div>
+
+          <div style={styles.section}>
+            <h4 style={{ margin: 0 }}>Filter by File Type</h4>
+            <p style={styles.helperText}>Quickly narrow down results based on MIME type.</p>
+            <div style={styles.filterPills}>
+              {(Object.keys(fileTypeLabels) as FileTypeFilter[]).map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  disabled={filterType === type}
+                  onClick={() => handleFilterChange(type)}
+                  style={filterPillStyle(filterType === type)}
+                >
+                  {fileTypeLabels[type]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={styles.section}>
+            <h4 style={{ margin: 0 }}>Selection & Batch Actions</h4>
+            <p style={styles.helperText}>
+              Selected {selectionCount} / {filteredImages.length || images.length} (filter:{" "}
+              {fileTypeLabels[filterType]})
+            </p>
+            <div style={styles.selectionActions}>
+              <button
+                onClick={selectAllFiltered}
+                disabled={filteredImages.length === 0}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: "none",
+                  fontWeight: 600,
+                  flex: "1 1 120px",
+                  background: filteredImages.length === 0 ? "#cbd5f5" : "#0ea5e9",
+                  color: "#fff",
+                  cursor: filteredImages.length === 0 ? "not-allowed" : "pointer",
+                }}
+              >
+                Select filtered
+              </button>
+              <button
+                onClick={clearSelection}
+                disabled={!hasSelection}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: "1px solid #cbd5f5",
+                  fontWeight: 600,
+                  flex: "1 1 120px",
+                  background: "#fff",
+                  color: hasSelection ? "#0f172a" : "#94a3b8",
+                  cursor: hasSelection ? "pointer" : "not-allowed",
+                }}
+              >
+                Clear selection
+              </button>
+            </div>
+            <div style={styles.selectionActions}>
+              <button
+                onClick={handleBatchDownload}
+                disabled={!hasSelection || batchDownloading}
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: 10,
+                  border: "none",
+                  fontWeight: 600,
+                  flex: "1 1 140px",
+                  background: !hasSelection || batchDownloading ? "#94a3b8" : "#2563eb",
+                  color: "#fff",
+                  cursor: !hasSelection || batchDownloading ? "not-allowed" : "pointer",
+                }}
+              >
+                {batchDownloading ? "⬇️ Exporting..." : "⬇️ Download ZIP"}
+              </button>
+              <button
+                onClick={handleBatchDelete}
+                disabled={!hasSelection || batchDeleting}
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: 10,
+                  border: "none",
+                  fontWeight: 600,
+                  flex: "1 1 140px",
+                  background: !hasSelection || batchDeleting ? "#fca5a5" : "#dc2626",
+                  color: "#fff",
+                  cursor: !hasSelection || batchDeleting ? "not-allowed" : "pointer",
+                }}
+              >
+                {batchDeleting ? "🗑️ Deleting..." : "🗑️ Delete Selected"}
+              </button>
+            </div>
           </div>
         </aside>
 
@@ -834,48 +1139,81 @@ export default function Gallery() {
                   </div>
                 )}
 
-                <div style={styles.galleryGrid}>
-                  {images.map((img) => (
-                    <div
-                      key={img.id}
-                      style={styles.card}
-                      onDoubleClick={() => handleCardDoubleClick(img)}
-                    >
-                      <img
-                        src={`http://localhost:4000${img.thumbnail}`}
-                        style={{ width: "100%", borderRadius: 8, pointerEvents: "none" }}
-                        alt={img.filename}
-                        draggable={false}
-                      />
-                      <div style={{ fontSize: 13, fontWeight: 600 }}>{img.filename}</div>
-                      <div style={{ fontSize: 12, color: "#64748b" }}>
-                        {formatBytes(img.size)} • {new Date(img.createdAt).toLocaleDateString()}
-                      </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDelete(img.id, img.filename);
-                        }}
-                        disabled={deletingId === img.id}
-                        style={{
-                          position: "absolute",
-                          top: 8,
-                          right: 8,
-                          padding: "4px 8px",
-                          fontSize: 12,
-                          border: "none",
-                          borderRadius: 6,
-                          background: deletingId === img.id ? "#94a3b8" : "rgba(220,53,69,0.9)",
-                          color: "#fff",
-                          cursor: deletingId === img.id ? "not-allowed" : "pointer",
-                          fontWeight: 600,
-                        }}
-                      >
-                        {deletingId === img.id ? "..." : "✕"}
-                      </button>
-                    </div>
-                  ))}
-                </div>
+                {filteredImages.length === 0 ? (
+                  <div
+                    style={{
+                      padding: 40,
+                      textAlign: "center",
+                      border: "1px dashed #cbd5f5",
+                      borderRadius: 12,
+                      color: "#94a3b8",
+                    }}
+                  >
+                    No images match the current filter ({fileTypeLabels[filterType]}).
+                  </div>
+                ) : (
+                  <div style={styles.galleryGrid}>
+                    {filteredImages.map((img) => {
+                      const isSelected = selectedIds.has(img.id);
+                      return (
+                        <div
+                          key={img.id}
+                          style={{
+                            ...styles.card,
+                            border: isSelected ? "2px solid #2563eb" : "1px solid #e2e8f0",
+                            boxShadow: isSelected
+                              ? "0 0 0 3px rgba(37,99,235,0.12)"
+                              : "0 20px 35px rgba(15,23,42,0.08)",
+                          }}
+                          onDoubleClick={() => handleCardDoubleClick(img)}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(event) => {
+                              event.stopPropagation();
+                              toggleSelection(img.id);
+                            }}
+                            style={styles.cardCheckbox}
+                          />
+                          <img
+                            src={`http://localhost:4000${img.thumbnail}`}
+                            style={{ width: "100%", borderRadius: 8, pointerEvents: "none" }}
+                            alt={img.filename}
+                            draggable={false}
+                          />
+                          <div style={{ fontSize: 13, fontWeight: 600 }}>{img.filename}</div>
+                          <div style={{ fontSize: 12, color: "#64748b", display: "flex", flexDirection: "column", gap: 2 }}>
+                            <span>{formatBytes(img.size)} • {new Date(img.createdAt).toLocaleDateString()}</span>
+                            <span>Type: {img.mimetype}</span>
+                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteImage(img.id, img.filename);
+                            }}
+                            disabled={deletingId === img.id}
+                            style={{
+                              position: "absolute",
+                              top: 8,
+                              right: 8,
+                              padding: "4px 8px",
+                              fontSize: 12,
+                              border: "none",
+                              borderRadius: 6,
+                              background: deletingId === img.id ? "#94a3b8" : "rgba(220,53,69,0.9)",
+                              color: "#fff",
+                              cursor: deletingId === img.id ? "not-allowed" : "pointer",
+                              fontWeight: 600,
+                            }}
+                          >
+                            {deletingId === img.id ? "..." : "✕"}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </>
             ) : (
               <div style={styles.viewerPanel} ref={viewerContainerRef}>
@@ -883,7 +1221,7 @@ export default function Gallery() {
                   <Viewer
                     mode="embedded"
                     containerSize={viewerSize}
-                    imageUrl={`http://localhost:4000/uploads/images/${selectedImageMeta.filename}`}
+                    imageUrl={`http://localhost:4000${selectedImageMeta.original ?? `/uploads/images/${selectedImageMeta.filename}`}`}
                     onClose={() => {
                       setSelectedImageMeta(null);
                       setActiveTab("gallery");
