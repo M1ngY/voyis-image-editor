@@ -76,11 +76,25 @@ graph TD;
 
 ## 6. Optional Enhancements
 
-### 6.1 WASM-based Image Operations
-- Use a WebAssembly module (e.g., `wasm-imagemagick`) for client-side image cropping
-- Faster performance and lower dependency on Node native modules
+### 6.1 WASM-based Image Operations ✅ IMPLEMENTED
+- **Implementation**: Uses `@squoosh/lib` for browser-compatible WASM image processing
+- **Features**:
+  - Client-side image optimization using WebAssembly
+  - WebP/JPEG/PNG format conversion with quality control
+  - Image resizing with multiple interpolation methods (Lanczos3, Mitchell, etc.)
+  - Zero Node.js native dependencies - pure browser WASM
+  - Automatic fallback to original image if WASM processing fails
+- **Integration**: 
+  - Toggleable WASM processing in Single-Image Viewer
+  - Applied to cropped image export and upload operations
+  - Optimizes images before upload to reduce server storage
+- **Benefits**:
+  - Faster performance compared to pure JavaScript canvas operations
+  - Better compression ratios (especially with WebP format)
+  - No Node.js version compatibility issues (runs entirely in browser)
+  - Reduces bandwidth and storage requirements
 
-### 6.2 Metadata Editing
+### 6.2 Metadata Editing ✅ IMPLEMENTED
 - Use `exifr` to extract and optionally edit EXIF metadata
 - Sync metadata changes to PostgreSQL
 

@@ -32,6 +32,8 @@ export default function Viewer({
   // scale now only applies to the image (not stage)
   const [scale, setScale] = useState(1);
   const [isUploading, setIsUploading] = useState(false);
+  const [isProcessingWASM, setIsProcessingWASM] = useState(false);
+  const [useWASM, setUseWASM] = useState(false);
 
   const stageRef = useRef<any>(null);
   const imageRef = useRef<any>(null);
@@ -141,13 +143,98 @@ export default function Viewer({
     return canvas.toDataURL();
   };
 
-  const exportCrop = () => {
+  /** Export crop */
+  const exportCrop = async () => {
     const data = getCroppedImageData();
     if (!data) return;
-    const link = document.createElement("a");
-    link.download = `crop-${Date.now()}.png`;
-    link.href = data;
-    link.click();
+
+    console.log("Export crop - WASM enabled:", useWASM);
+
+    if (useWASM) {
+      setIsProcessingWASM(true);
+      try {
+        console.log("🚀 Starting WASM processing...");
+        // Dynamic import to avoid loading issues
+        const { processImageToDataURL } = await import("./wasmImageProcessor");
+        console.log("✅ WASM module loaded successfully");
+        
+        // Convert data URL to blob
+        const response = await fetch(data);
+        const blob = await response.blob();
+        console.log("📦 Original blob - size:", blob.size, "bytes, type:", blob.type);
+        
+        // Process with WASM
+        console.log("⚙️ Processing with WASM (format: webp, quality: 90)...");
+        const startTime = performance.now();
+        const optimized = await processImageToDataURL(blob, {
+          format: 'webp',
+          quality: 90,
+        });
+        const endTime = performance.now();
+        console.log(`✅ WASM processing complete in ${((endTime - startTime) / 1000).toFixed(2)}s`);
+        console.log("📊 Result preview:", optimized.substring(0, 60) + "...");
+        
+        // Verify it's actually WebP
+        if (!optimized.startsWith('data:image/webp')) {
+          console.error("❌ WASM result is NOT WebP format!");
+          console.error("Expected: data:image/webp;base64,...");
+          console.error("Got:", optimized.substring(0, 50));
+          throw new Error(`WASM processing did not produce WebP format. Got: ${optimized.substring(0, 30)}`);
+        }
+        
+        console.log("✅ Verified WebP format");
+        
+        // Create blob from data URL to ensure proper MIME type
+        const base64Data = optimized.split(',')[1];
+        if (!base64Data) {
+          throw new Error("Invalid data URL format");
+        }
+        
+        const binaryData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+        const webpBlob = new Blob([binaryData], { type: 'image/webp' });
+        console.log("📦 Created WebP blob - size:", webpBlob.size, "bytes, type:", webpBlob.type);
+        
+        // Verify blob type
+        if (webpBlob.type !== 'image/webp') {
+          console.warn("⚠️ Blob type mismatch! Expected image/webp, got:", webpBlob.type);
+        }
+        
+        // Create object URL for download
+        const url = URL.createObjectURL(webpBlob);
+        const link = document.createElement("a");
+        const filename = `crop-optimized-${Date.now()}.webp`;
+        link.download = filename;
+        link.href = url;
+        
+        // Force download with correct extension
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Clean up
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        console.log(`✅ WebP file "${filename}" downloaded successfully`);
+        console.log(`📊 Size reduction: ${blob.size} → ${webpBlob.size} bytes (${((1 - webpBlob.size / blob.size) * 100).toFixed(1)}% smaller)`);
+      } catch (err: any) {
+        console.error("❌ WASM processing error:", err);
+        console.error("📋 Error details:", err?.stack);
+        console.error("🔄 Falling back to PNG format");
+        alert(`WASM processing failed: ${err?.message || err}\n\nCheck browser console (F12) for details.\n\nFalling back to PNG format.`);
+        // Fallback to original
+        const link = document.createElement("a");
+        link.download = `crop-${Date.now()}.png`;
+        link.href = data;
+        link.click();
+      } finally {
+        setIsProcessingWASM(false);
+      }
+    } else {
+      console.log("📤 Exporting as PNG (WASM disabled)");
+      const link = document.createElement("a");
+      link.download = `crop-${Date.now()}.png`;
+      link.href = data;
+      link.click();
+    }
   };
 
   /** Upload crop */
@@ -162,11 +249,39 @@ export default function Viewer({
 
     setIsUploading(true);
     try {
+      let imageDataToUpload = data;
+
+      // Process with WASM if enabled
+      if (useWASM) {
+        setIsProcessingWASM(true);
+        try {
+          // Dynamic import to avoid loading issues
+          const { processImageToDataURL } = await import("./wasmImageProcessor");
+          
+          const response = await fetch(data);
+          const blob = await response.blob();
+          
+          // Optimize with WASM before upload
+          const optimized = await processImageToDataURL(blob, {
+            format: 'webp',
+            quality: 85,
+          });
+          
+          imageDataToUpload = optimized;
+        } catch (err: any) {
+          console.error("WASM processing error:", err);
+          // Fallback to original if WASM processing fails
+          console.warn("Falling back to original image data");
+        } finally {
+          setIsProcessingWASM(false);
+        }
+      }
+
       const res = await fetch("http://localhost:4000/upload/crop", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          imageData: data,
+          imageData: imageDataToUpload,
           originalFilename: fileName,
         }),
       });
@@ -189,7 +304,7 @@ export default function Viewer({
         throw new Error(result.error || "Upload failed");
       }
 
-      alert("Cropped image uploaded successfully!");
+      alert(`Cropped image uploaded successfully!${useWASM ? ' (WASM optimized)' : ''}`);
       onUploadSuccess?.();
     } catch (err: any) {
       alert(`Failed to upload cropped image: ${err?.message || err}`);
@@ -213,18 +328,41 @@ export default function Viewer({
           onClick={uploadCrop}
           style={{
             ...styles.btn,
-            opacity: isUploading ? 0.6 : 1,
-            cursor: isUploading ? "not-allowed" : "pointer",
+            opacity: isUploading || isProcessingWASM ? 0.6 : 1,
+            cursor: isUploading || isProcessingWASM ? "not-allowed" : "pointer",
           }}
-          disabled={isUploading}
+          disabled={isUploading || isProcessingWASM}
         >
-          {isUploading ? "⏳ Uploading..." : "☁️ Upload"}
+          {isProcessingWASM ? "⚡ Processing..." : isUploading ? "⏳ Uploading..." : "☁️ Upload"}
         </button>
-        <button onClick={exportCrop} style={styles.btn}>💾 Export</button>
+        <button 
+          onClick={exportCrop} 
+          style={{
+            ...styles.btn,
+            opacity: isProcessingWASM ? 0.6 : 1,
+            cursor: isProcessingWASM ? "not-allowed" : "pointer",
+          }}
+          disabled={isProcessingWASM}
+        >
+          {isProcessingWASM ? "⚡ Processing..." : "💾 Export"}
+        </button>
         <button onClick={resetCrop} style={styles.btn}>🔄 Reset</button>
+        <button
+          onClick={() => setUseWASM(!useWASM)}
+          style={{
+            ...styles.btn,
+            background: useWASM ? "#22c55e" : "#fff",
+            color: useWASM ? "#fff" : "#000",
+            fontWeight: useWASM ? 600 : 400,
+          }}
+          title="Enable WASM-based image optimization"
+        >
+          {useWASM ? "⚡ WASM ON" : "⚡ WASM OFF"}
+        </button>
         {cropInfo && (
           <div style={styles.info}>
             Size: {cropInfo.width} × {cropInfo.height}px
+            {useWASM && <span style={{ display: "block", fontSize: "10px", marginTop: "2px" }}>WASM enabled</span>}
           </div>
         )}
         <div style={{ flex: 1 }} />

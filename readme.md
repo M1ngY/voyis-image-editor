@@ -38,3 +38,18 @@ npm run dev
 
 `PUT /images/:id` also accepts an optional `exif` object (e.g. `{ make, model, iso, dateTimeOriginal }`) so the client UI can edit stored camera metadata without rewriting the physical file.
 
+## Features
+
+### WASM Image Processing
+The application includes WebAssembly-based image processing capabilities:
+- **Browser-compatible**: Uses `@squoosh/lib` - no Node.js native dependencies
+- **Optimization**: Compress and optimize images before upload/export
+- **Format conversion**: Convert to WebP/JPEG/PNG with quality control
+- **Toggleable**: Enable/disable WASM processing in the Single-Image Viewer
+- **Auto-fallback**: Automatically falls back to original image if WASM processing fails
+
+To use WASM processing:
+1. Open an image in the Single-Image Viewer (double-click a thumbnail)
+2. Click the "⚡ WASM OFF" button to enable WASM processing
+3. When enabled, exported and uploaded cropped images will be optimized using WebAssembly
+

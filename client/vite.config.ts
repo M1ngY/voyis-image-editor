@@ -26,4 +26,22 @@ export default defineConfig({
         : {},
     }),
   ],
+  optimizeDeps: {
+    exclude: ['@squoosh/lib'],
+    include: ['@squoosh/lib > @squoosh/client'],
+  },
+  build: {
+    commonjsOptions: {
+      include: [/node_modules/],
+      transformMixedEsModules: true,
+    },
+  },
+  server: {
+    fs: {
+      allow: ['..'],
+    },
+  },
+  define: {
+    global: 'globalThis',
+  },
 })
