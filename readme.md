@@ -36,3 +36,5 @@ npm run dev
 
 > The API server listens on `http://localhost:4000` by default. Start Postgres and `server` before launching the Electron client.
 
+`PUT /images/:id` also accepts an optional `exif` object (e.g. `{ make, model, iso, dateTimeOriginal }`) so the client UI can edit stored camera metadata without rewriting the physical file.
+
