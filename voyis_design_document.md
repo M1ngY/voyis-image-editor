@@ -89,6 +89,16 @@ flowchart TD
 | Upload Drawer | Drop zone, queued files with progress, error badges | Stays docked on right, non-blocking |
 | Sync Panel | Status summary, pending/conflict lists, CTA buttons | Presents conflict cards with compare action |
 
+### 5.1.1 Production UI Snapshot
+
+Actual gallery UI (Electron renderer) implements the above blueprint with the following visual hierarchy:
+
+- **Left rail**: Control panel cards for Upload/Sync/Folder Config, Sync Strategy reminder (“Local Always Wins”), filter pills, batch actions, EXIF placeholder, Activity Log.
+- **Center content**: Tabbed view (`Gallery` / `Single Viewer`). Gallery shows virtualized cards (thumbnail, filename, size, MIME) with corner delete buttons; activity log at bottom streams operations (fetch, delete, sync) with timestamps.
+- **Color cues**: Primary blue for actions, green for sync success, red for destructive operations, matching design tokens described in UI spec.
+
+Screenshots: see `docs/screenshots/gallery.png`（same as attached reference）。
+
 ### 5.2 User Journey
 
 1. **Startup** → Gallery preloads cached thumbnails and shows loading skeletons while remote data is fetched.
@@ -161,6 +171,38 @@ flowchart TD
   - Better compression ratios (especially with WebP format)
   - No Node.js version compatibility issues (runs entirely in browser)
   - Reduces bandwidth and storage requirements
+
+#### WASM Pipeline (Implementation Detail)
+
+```mermaid
+sequenceDiagram
+    participant UI as Viewer UI
+    participant Canvas as HTMLCanvasElement
+    participant WASM as wasmImageProcessor.ts
+    participant Server as API / Upload
+
+    UI->>Canvas: Render selected crop
+    UI->>WASM: request processImageToDataURL(blob, options)
+    WASM->>WASM: Decode Blob → ImageBitmap
+    WASM->>WASM: Optional resize (maintain aspect ratio)
+    WASM->>WASM: Encode (native WebP or @squoosh/lib fallback)
+    WASM-->>UI: Optimized data URL + stats
+    UI->>Server: Upload/Export payload
+    Server-->>UI: Success response (activity log update)
+```
+
+Invocation in code:
+
+```ts
+const { processImageToDataURL } = await import('./wasmImageProcessor');
+const processed = await processImageToDataURL(blob, {
+  format: useWASM ? 'webp' : 'png',
+  quality: 85,
+  resize: viewerResizeOptions,
+});
+```
+
+If native WebP path fails (e.g., canvas context unavailable), processor falls back to `@squoosh/lib`’s ImagePool to perform `mozjpeg`/`oxipng` encoding before handing the optimized buffer back to the viewer or upload pipeline.
 
 ### 6.2 Metadata Editing 
 - Use `exifr` to extract and optionally edit EXIF metadata
