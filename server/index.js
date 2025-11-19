@@ -580,4 +580,9 @@ app.post("/images/export", async (req, res) => {
 app.use("/thumbnails", express.static(path.join(__dirname, "uploads", "thumbnails")));
 app.use("/uploads/images", express.static(path.join(__dirname, "uploads", "images")));
 
-app.listen(PORT, () => console.log(`API server running on http://localhost:${PORT}`));
+// Export app for testing
+if (require.main !== module) {
+  module.exports = app;
+} else {
+  app.listen(PORT, () => console.log(`API server running on http://localhost:${PORT}`));
+}

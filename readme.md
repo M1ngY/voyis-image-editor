@@ -53,3 +53,29 @@ To use WASM processing:
 2. Click the "⚡ WASM OFF" button to enable WASM processing
 3. When enabled, exported and uploaded cropped images will be optimized using WebAssembly
 
+## Testing
+
+### Client Tests
+```bash
+cd client
+npm test              # Run all tests
+npm run test:watch    # Watch mode
+npm run test:coverage # Generate coverage report
+```
+
+### Server Tests
+```bash
+cd server
+npm test              # Run all tests
+npm run test:watch    # Watch mode
+npm run test:coverage # Generate coverage report
+```
+
+### Test Coverage
+- **syncUtils**: Complete test coverage for all utility functions
+- **Gallery Component**: Basic rendering and interaction tests
+- **Viewer Component**: Component rendering and WASM toggle tests
+- **WASM Image Processor**: Image processing function tests
+- **API Endpoints**: Full endpoint testing with mocked dependencies
+- **Coverage threshold**: 50% for branches, functions, lines, and statements
+
