@@ -65,7 +65,7 @@ app.post('/upload', upload.single('image'), async (req, res) => {
       }
     });
 
-    res.json({ success: true, image, thumbnail: thumbFilename });
+    res.json({ success: true, image: buildImageResponse(image), thumbnail: thumbFilename });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Upload failed' });
@@ -117,7 +117,7 @@ app.post('/upload/crop', async (req, res) => {
 
     res.json({ 
       success: true, 
-      image, 
+      image: buildImageResponse(image), 
       thumbnail: thumbFilename,
       message: 'Cropped image uploaded successfully'
     });
@@ -317,6 +317,68 @@ app.get("/images/:id", async (req, res) => {
   } catch (err) {
     console.error('Failed to fetch image:', err);
     res.status(500).json({ error: 'Failed to fetch image' });
+  }
+});
+
+app.post("/sync", async (req, res) => {
+  try {
+    const { localImages } = req.body || {};
+    if (!Array.isArray(localImages)) {
+      return res.status(400).json({ error: 'localImages must be an array' });
+    }
+
+    const serverImages = await prisma.image.findMany();
+    const localMap = new Map(
+      localImages
+        .filter((img) => typeof img?.id === 'number')
+        .map((img) => [img.id, img])
+    );
+
+    const addedOrUpdated = [];
+    const conflicts = [];
+
+    for (const img of serverImages) {
+      const local = localMap.get(img.id);
+      const serverUpdatedAt = new Date(img.updatedAt).getTime();
+      if (!local) {
+        addedOrUpdated.push(buildImageResponse(img));
+        continue;
+      }
+
+      const localLastModified = Number(local.lastModified) || 0;
+      const localStatus = local.syncStatus || 'synced';
+
+      if (localStatus === 'pending') {
+        if (serverUpdatedAt > localLastModified) {
+          conflicts.push({
+            id: img.id,
+            server: buildImageResponse(img),
+            serverUpdatedAt,
+            localLastModified,
+          });
+        }
+        continue;
+      }
+
+      if (serverUpdatedAt > localLastModified) {
+        addedOrUpdated.push(buildImageResponse(img));
+      }
+    }
+
+    const serverIds = new Set(serverImages.map((img) => img.id));
+    const removed = localImages
+      .filter((img) => typeof img?.id === 'number')
+      .filter((img) => !serverIds.has(img.id) && img.syncStatus !== 'pending')
+      .map((img) => img.id);
+
+    res.json({
+      addedOrUpdated,
+      removed,
+      conflicts,
+    });
+  } catch (err) {
+    console.error('Sync endpoint error:', err);
+    res.status(500).json({ error: 'Failed to sync', details: err.message });
   }
 });
 

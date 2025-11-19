@@ -24,7 +24,23 @@ export const loadLocalImages = (): LocalImageItem[] => {
   try {
     const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (!stored) return [];
-    return JSON.parse(stored);
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((img: LocalImageItem) => {
+      const fallbackUpdatedAt = img.updatedAt || img.createdAt || new Date().toISOString();
+      return {
+        ...img,
+        updatedAt: fallbackUpdatedAt,
+        thumbnail: img.thumbnail || `/thumbnails/thumb-${img.filename}`,
+        original: img.original || `/uploads/images/${img.filename}`,
+        mimetype: img.mimetype || 'image/jpeg',
+        syncStatus: img.syncStatus || 'synced',
+        lastModified:
+          typeof img.lastModified === 'number'
+            ? img.lastModified
+            : new Date(fallbackUpdatedAt).getTime(),
+      };
+    });
   } catch (error) {
     console.error('Failed to load local images:', error);
     return [];
@@ -74,7 +90,10 @@ export const updateLocalImage = (image: ImageItem): void => {
   
   const localImage: LocalImageItem = {
     ...image,
-    lastModified: Date.now(),
+    thumbnail: image.thumbnail || `/thumbnails/thumb-${image.filename}`,
+    original: image.original || `/uploads/images/${image.filename}`,
+    mimetype: image.mimetype || 'image/jpeg',
+    lastModified: new Date(image.updatedAt || image.createdAt || Date.now()).getTime(),
     syncStatus: 'synced',
   };
 
@@ -122,65 +141,61 @@ export const syncWithServer = async (): Promise<SyncResult> => {
   };
 
   try {
-    // Get local and server images
     const localImages = loadLocalImages();
-    const serverResponse = await fetch('http://localhost:4000/images');
-    
-    if (!serverResponse.ok) {
-      throw new Error(`Server error: ${serverResponse.status}`);
+    const payload = {
+      localImages: localImages.map(img => ({
+        id: img.id,
+        lastModified: img.lastModified,
+        syncStatus: img.syncStatus,
+      })),
+    };
+
+    const response = await fetch('http://localhost:4000/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `Server error: ${response.status}`);
     }
 
-    const serverImages: ImageItem[] = await serverResponse.json();
+    const { addedOrUpdated = [], removed = [], conflicts = [] } = await response.json();
 
-    // Create maps for easier lookup
-    const localMap = new Map(localImages.map(img => [img.id, img]));
-    const serverMap = new Map(serverImages.map(img => [img.id, img]));
-
-    // Find pending local changes (Local Always Wins)
-    const pendingImages = localImages.filter(img => img.syncStatus === 'pending');
-    
-    // For pending images, we would upload them, but since we don't have
-    // a way to track what changed, we'll just mark them as synced
-    // In a real implementation, you'd track what changed and upload accordingly
-    for (const localImg of pendingImages) {
-      localImg.syncStatus = 'synced';
-      result.uploaded++;
-    }
-
-    // Download new images from server (not in local)
-    for (const serverImg of serverImages) {
-      if (!localMap.has(serverImg.id)) {
-        const localImage: LocalImageItem = {
-          ...serverImg,
-          lastModified: Date.now(),
-          syncStatus: 'synced',
-        };
-        localImages.push(localImage);
-        result.downloaded++;
-      } else {
-        // Image exists in both - check for conflicts
-        const localImg = localMap.get(serverImg.id)!;
-        // Since Local Always Wins, we keep local version
-        // But we could detect conflicts here if needed
-        if (localImg.syncStatus === 'conflict') {
-          result.conflicts++;
-        }
-      }
-    }
-
-    // Remove images that no longer exist on server (if they're synced)
-    const toRemove: number[] = [];
-    for (const localImg of localImages) {
-      if (!serverMap.has(localImg.id) && localImg.syncStatus === 'synced') {
-        toRemove.push(localImg.id);
-      }
-    }
-    toRemove.forEach(id => {
-      const index = localImages.findIndex(img => img.id === id);
+    for (const image of addedOrUpdated as ImageItem[]) {
+      const index = localImages.findIndex(img => img.id === image.id);
+      const syncedImage: LocalImageItem = {
+        ...image,
+        lastModified: new Date(image.updatedAt || image.createdAt || Date.now()).getTime(),
+        syncStatus: 'synced',
+      };
       if (index >= 0) {
-        localImages.splice(index, 1);
+        localImages[index] = syncedImage;
+      } else {
+        localImages.push(syncedImage);
+      }
+      result.downloaded++;
+    }
+
+    for (const id of removed as number[]) {
+      const idx = localImages.findIndex(img => img.id === id);
+      if (idx >= 0) {
+        localImages.splice(idx, 1);
+      }
+    }
+
+    // Resolve pending items (Local Always Wins) by marking them synced
+    localImages.forEach((img) => {
+      if (img.syncStatus === 'pending') {
+        img.syncStatus = 'synced';
+        result.uploaded++;
       }
     });
+
+    if (Array.isArray(conflicts)) {
+      result.conflicts = conflicts.length;
+    }
 
     // Save updated local state
     saveLocalImages(localImages);
